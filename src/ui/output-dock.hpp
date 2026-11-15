@@ -33,7 +33,7 @@ class DockPreview : public QWidget {
 	Q_OBJECT
 public:
 	DockPreview(const QString &displayId, int dispW, int dispH, QWidget *parent = nullptr);
-	static std::atomic<bool> live; /* "Live previews" switch */
+	static std::atomic<bool> live;            /* "Live previews" switch */
 	static std::atomic<uint64_t> framesShown; /* new frames painted (diagnostics) */
 
 	QString displayId() const { return id_; }
