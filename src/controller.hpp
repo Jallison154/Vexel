@@ -18,6 +18,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QImage>
 #include <QObject>
 #include <QPointer>
+#include <QElapsedTimer>
 #include <QTimer>
 
 namespace om {
@@ -212,6 +213,9 @@ private:
 	QHash<QString, Identify> identify_;
 	QTimer healthTimer_;
 	QHash<QString, uint64_t> lastFrames_;
+	QHash<QString, qint64> lastSampleNs_;
+	QHash<QString, double> fpsAvg_; /* smoothed, frames per real second */
+	QElapsedTimer healthClock_;
 	QHash<QString, int> outputFps_, zeroSeconds_;
 	QSet<QString> stalled_;
 	void sampleHealth();

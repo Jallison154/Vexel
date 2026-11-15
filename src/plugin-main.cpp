@@ -550,6 +550,7 @@ VENDOR_REQ(DockInfo)
 			dw->setFloating(obs_data_get_bool(req, "floating"));
 		QCoreApplication::processEvents();
 		obs_data_set_bool(res, "visible", !dw->isHidden());
+		obs_data_set_int(res, "framesShown", (long long)DockPreview::framesShown.load());
 		obs_data_set_bool(res, "floating", dw->isFloating());
 		obs_data_set_int(res, "width", dw->width());
 		obs_data_set_int(res, "height", dw->height());

@@ -97,8 +97,9 @@ static void delayTick(void *);
 struct ThumbSlot {
 	uint32_t w = 0, h = 0;
 	gs_texrender_t *tr = nullptr;
-	gs_stagesurf_t *stage[2] = {nullptr, nullptr};
-	bool primed[2] = {false, false};
+	static constexpr int kStages = 3; /* read back 2 frames late: never stalls */
+	gs_stagesurf_t *stage[kStages] = {nullptr, nullptr, nullptr};
+	bool primed[kStages] = {false, false, false};
 	int cycle = 0;
 };
 static std::mutex g_thumbMutex;
@@ -110,8 +111,8 @@ static uint64_t g_thumbFrame = 0;
 static void destroyThumb(ThumbSlot &t)
 {
 	gs_texrender_destroy(t.tr);
-	gs_stagesurface_destroy(t.stage[0]);
-	gs_stagesurface_destroy(t.stage[1]);
+	for (gs_stagesurf_t *s : t.stage)
+		gs_stagesurface_destroy(s);
 	t = ThumbSlot{};
 }
 
@@ -665,11 +666,9 @@ QImage latestThumbnail(const std::string &displayId)
 
 static void thumbTick(const RenderState &st)
 {
-	/* ~10 fps whatever the OBS frame rate. */
-	const double fps = videoFps();
-	const uint64_t every = (uint64_t)std::max(1.0, std::round((fps > 0 ? fps : 30.0) / 10.0));
-	if (g_thumbFrame++ % every != 0)
-		return;
+	/* Every OBS frame (full frame rate), so the dock shows motion exactly
+	 * as the outputs do. */
+	g_thumbFrame++;
 
 	std::vector<ThumbnailRequest> reqs;
 	{
@@ -699,10 +698,10 @@ static void thumbTick(const RenderState &st)
 			t.w = w;
 			t.h = h;
 			t.tr = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
-			t.stage[0] = gs_stagesurface_create(w, h, GS_BGRA);
-			t.stage[1] = gs_stagesurface_create(w, h, GS_BGRA);
+			for (gs_stagesurf_t *&s : t.stage)
+				s = gs_stagesurface_create(w, h, GS_BGRA);
 		}
-		if (!t.tr || !t.stage[0] || !t.stage[1])
+		if (!t.tr || !t.stage[0] || !t.stage[1] || !t.stage[2])
 			continue;
 
 		gs_texrender_reset(t.tr);
@@ -713,11 +712,11 @@ static void thumbTick(const RenderState &st)
 			renderDisplay(d->second, w, h, true); /* same path as the output */
 			gs_texrender_end(t.tr);
 		}
-		const int k = t.cycle % 2, prev = (t.cycle + 1) % 2;
+		const int k = t.cycle % ThumbSlot::kStages, prev = (t.cycle + 1) % ThumbSlot::kStages;
 		gs_stage_texture(t.stage[k], gs_texrender_get_texture(t.tr));
 		t.primed[k] = true;
-		/* Read back the one staged a cycle ago: already finished on the GPU,
-		 * so this never stalls the render loop. */
+		/* Read back the oldest staged frame (two frames ago): already
+		 * finished on the GPU, so this never stalls the render loop. */
 		if (t.primed[prev]) {
 			uint8_t *data = nullptr;
 			uint32_t linesize = 0;

@@ -14,6 +14,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include "render/identify-image.hpp"
 #include "ui/output-window.hpp"
 
+#include <cmath>
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -89,6 +90,7 @@ Controller::Controller(QObject *parent) : QObject(parent)
 	for (QScreen *s : QGuiApplication::screens())
 		connect(s, &QScreen::geometryChanged, &screenTimer_, qOverload<>(&QTimer::start));
 
+	healthClock_.start();
 	healthTimer_.setInterval(1000);
 	connect(&healthTimer_, &QTimer::timeout, this, &Controller::sampleHealth);
 	healthTimer_.start();
@@ -1297,11 +1299,22 @@ void Controller::sampleHealth()
 			continue;
 		any = true;
 		running.insert(it.key());
+		/* Frames drawn divided by the REAL time since the last sample: the
+		 * sampling timer runs on the UI thread and can fire late or early
+		 * when the UI is busy, which must not look like dropped frames. */
 		const uint64_t f = w->frameCount();
-		const int fps = lastFrames_.contains(it.key()) ? (int)(f - lastFrames_.value(it.key())) : -1;
+		const qint64 now = healthClock_.nsecsElapsed();
+		const bool first = !lastFrames_.contains(it.key());
+		const uint64_t df = first ? 0 : f - lastFrames_.value(it.key());
+		const qint64 dt = first ? 0 : now - lastSampleNs_.value(it.key());
 		lastFrames_.insert(it.key(), f);
-		if (fps < 0)
-			continue; /* first sample after start */
+		lastSampleNs_.insert(it.key(), now);
+		if (first || dt < 200000000)
+			continue; /* first sample after start, or too short to measure */
+		const double inst = (double)df * 1e9 / (double)dt;
+		const double avg = fpsAvg_.contains(it.key()) ? fpsAvg_.value(it.key()) * 0.5 + inst * 0.5 : inst;
+		fpsAvg_.insert(it.key(), avg);
+		const int fps = df == 0 ? 0 : std::max(1, (int)std::lround(avg));
 		outputFps_.insert(it.key(), fps);
 		if (fps == 0) {
 			const int z = zeroSeconds_.value(it.key()) + 1;
@@ -1328,6 +1341,8 @@ void Controller::sampleHealth()
 	for (const QString &id : lastFrames_.keys())
 		if (!running.contains(id)) {
 			lastFrames_.remove(id);
+			lastSampleNs_.remove(id);
+			fpsAvg_.remove(id);
 			outputFps_.remove(id);
 			zeroSeconds_.remove(id);
 			stalled_.remove(id);

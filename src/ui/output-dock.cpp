@@ -16,6 +16,9 @@ the Free Software Foundation; either version 2 of the License, or
 
 #include <obs-frontend-api.h>
 
+#include <algorithm>
+#include <cmath>
+
 #include <QCheckBox>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -57,8 +60,11 @@ QSize DockPreview::requestedPixels() const
 	return QSize(w, std::max(9, (int)(w * aspect_)));
 }
 
+std::atomic<uint64_t> DockPreview::framesShown{0};
+
 void DockPreview::setImage(const QImage &img)
 {
+	framesShown++;
 	image_ = img;
 	update();
 }
@@ -150,15 +156,26 @@ OutputDock::OutputDock(std::function<void()> openEditor, QWidget *parent)
 			p->update();
 	});
 
-	/* Pull the latest thumbnails ~10x a second; refresh the requested
-	 * sizes (cheap) so resizing the dock just changes the next render. */
+	/* Pull new thumbnails at twice the OBS frame rate (only frames that
+	 * actually changed are repainted), so the dock moves at full frame
+	 * rate. Requested sizes refresh 10x a second (resizing the dock just
+	 * changes the next render). */
 	auto *pull = new QTimer(this);
-	pull->setInterval(100);
-	connect(pull, &QTimer::timeout, this, [this]() {
-		updateRequests();
-		pullImages();
-	});
+	pull->setTimerType(Qt::PreciseTimer);
+	connect(pull, &QTimer::timeout, this, [this]() { pullImages(); });
+	auto setRate = [pull]() {
+		const double fps = gfx::videoFps();
+		pull->setInterval(std::clamp((int)(500.0 / (fps > 0 ? fps : 30.0)), 4, 50));
+	};
+	setRate();
 	pull->start();
+	auto *reqTimer = new QTimer(this);
+	reqTimer->setInterval(100);
+	connect(reqTimer, &QTimer::timeout, this, [this, setRate]() {
+		updateRequests();
+		setRate();
+	});
+	reqTimer->start();
 
 	/* Rebuild (coalesced) whenever displays, outputs or status change. */
 	auto *debounce = new QTimer(this);
@@ -184,8 +201,16 @@ OutputDock::OutputDock(std::function<void()> openEditor, QWidget *parent)
 				l->clear();
 			else if (ctl->outputStalled(id))
 				l->setText(QStringLiteral("<b style='color:%1'>⚠ NOT RENDERING</b>").arg(theme::kLive));
-			else
-				l->setText(QStringLiteral("<span style='opacity:0.75'>%1 fps</span>").arg(fps));
+			else {
+				/* Amber when clearly below the OBS frame rate. */
+				const double target = gfx::videoFps();
+				const bool low = target > 0 && fps < target * 0.9;
+				l->setText(low ? QStringLiteral("<b style='color:%1'>%2 / %3 fps</b>")
+							   .arg(theme::kWarn)
+							   .arg(fps)
+							   .arg((int)std::lround(target))
+					       : QStringLiteral("<span style='opacity:0.75'>%1 fps</span>").arg(fps));
+			}
 		}
 	});
 	rebuild();
@@ -368,8 +393,8 @@ void OutputDock::pullImages()
 		return;
 	for (DockPreview *p : findChildren<DockPreview *>()) {
 		QImage img = gfx::latestThumbnail(p->displayId().toStdString());
-		if (!img.isNull())
-			p->setImage(img);
+		if (!img.isNull() && img.cacheKey() != p->imageKey())
+			p->setImage(img); /* new frame only */
 	}
 }
 

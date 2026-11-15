@@ -34,10 +34,12 @@ class DockPreview : public QWidget {
 public:
 	DockPreview(const QString &displayId, int dispW, int dispH, QWidget *parent = nullptr);
 	static std::atomic<bool> live; /* "Live previews" switch */
+	static std::atomic<uint64_t> framesShown; /* new frames painted (diagnostics) */
 
 	QString displayId() const { return id_; }
 	QSize requestedPixels() const; /* thumbnail size to render */
 	void setImage(const QImage &img);
+	qint64 imageKey() const { return image_.cacheKey(); }
 
 	bool hasHeightForWidth() const override { return true; }
 	int heightForWidth(int w) const override;
