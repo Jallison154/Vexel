@@ -461,11 +461,18 @@ def phase_mapping(ws, work, fullscreen_builtin):
     time.sleep(0.3)
     p = snapshot(ws, "HDMI-2", os.path.join(work, "identify_pattern.ppm"))
     near = lambda a, b: max(abs(x - y) for x, y in zip(a, b)) <= 3
-    edges = [pixel(p, 0, 0), pixel(p, 1919, 0), pixel(p, 0, 1079), pixel(p, 1919, 1079), pixel(p, 960, 0)]
-    check("Test pattern: outermost pixels red on every edge", all(near(e, (255, 40, 40)) for e in edges), str(edges))
-    check("Test pattern: second pixel row white (edge-crop check)",
-          near(pixel(p, 960, 1), (255, 255, 255)) and near(pixel(p, 1, 540), (255, 255, 255)),
-          f"{pixel(p, 960, 1)} {pixel(p, 1, 540)}")
+    # The pattern is drawn at the slice's own rect, not the full output.
+    sx, sy, sw, sh = rl(next(s for s in disp(r["state"], "HDMI-2")["slices"] if s["enabled"])["dst"])
+    check("Test pattern sits on the slice (left + top edges red)",
+          near(pixel(p, sx, sy + 20), (255, 40, 40)) and near(pixel(p, sx + 20, sy), (255, 40, 40)),
+          f"slice {sx},{sy} {sw}x{sh}: {pixel(p, sx, sy + 20)} {pixel(p, sx + 20, sy)}")
+    check("Test pattern: second pixel inside the slice white (edge-crop check)",
+          near(pixel(p, sx + 1, sy + 20), (255, 255, 255)) and near(pixel(p, sx + 20, sy + 1), (255, 255, 255)),
+          f"{pixel(p, sx + 1, sy + 20)} {pixel(p, sx + 20, sy + 1)}")
+    if sx > 0 and sy > 0:
+        check("Test pattern: output area outside the slice stays black",
+              near(pixel(p, sx - 1, sy + 20), (0, 0, 0)) and near(pixel(p, 0, 0), (0, 0, 0)),
+              f"{pixel(p, sx - 1, sy + 20)} {pixel(p, 0, 0)}")
     check("Test pattern replaces the video", pixel(p, 1500, 900) != pattern_pixel(1920 + 1300, 800, TAG_A),
           str(pixel(p, 1500, 900)))
     ws.vendor("SetIdentify", {"displayName": "HDMI-2", "mode": "outlines"})

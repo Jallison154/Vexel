@@ -21,6 +21,8 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QElapsedTimer>
 #include <QTimer>
 
+#include <vector>
+
 namespace om {
 
 class OutputWindow;
@@ -187,7 +189,7 @@ private:
 	void recomputeStatuses();
 	void resumeWantedOutputs();
 	void onScreenRemoved(class QScreen *s);
-	void verifyOutputs(); /* watchdog: outputs must sit exactly on their display */
+	void verifyOutputs(bool fromWatchdog = false); /* watchdog: outputs must sit exactly on their display */
 	OutputWindowOptions optionsFor(QScreen *target) const;
 	DisplayIdentity identityFor(const ScreenInfo &si) const { return si.identity; }
 
@@ -197,6 +199,8 @@ private:
 	QHash<QString, DisplayStatus> statuses_;
 	QHash<QString, QPointer<OutputWindow>> outputs_;
 	QTimer saveTimer_, programTimer_, screenTimer_, watchdog_;
+	bool displayCheckQueued_ = false;
+	std::vector<QPointer<OutputWindow>> retiring_; /* stopped, deletion deferred */
 	int programW_ = 0, programH_ = 0;
 	bool loaded_ = false;
 	bool shuttingDown_ = false;
@@ -219,7 +223,6 @@ private:
 	QHash<QString, int> outputFps_, zeroSeconds_;
 	QSet<QString> stalled_;
 	void sampleHealth();
-	QHash<QString, std::pair<QString, std::shared_ptr<const QImage>>> previewPatterns_; /* key -> image */
 	void publishRender(); /* document + identify overlays -> graphics thread */
 	bool presetModified_ = false;
 	QString presetPath(const QString &name) const;

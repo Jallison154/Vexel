@@ -85,11 +85,14 @@ is the place they would go).
     show / hide, **F2** rename, **Esc** deselect. Copied slices go to the
     system clipboard, so they paste across presets and OBS sessions.
   - **Identify on the real output** (display panel ▸ *Identify*):
-    - **Test Pattern** replaces the output with a calibration image: red
+    - **Test Pattern** replaces each slice on the output with its own
+      calibration image, drawn at that slice's exact size and position: red
       outermost pixel row and white second row on every edge (if either is
-      missing on the screen, it is cropping), 100 px grid with pixel rulers,
-      corner markers, centre cross, display name and resolution, and every
-      slice's outline at its exact position.
+      missing on the screen, that edge is cropped), 100 px grid with pixel
+      rulers counted from the slice's corner, corner markers in the slice's
+      colour, centre cross, slice name, size and position. Areas no slice
+      covers stay black. An output with no slices shows one full-screen
+      pattern.
     - **Slice Outlines** draws each slice's outline and name over the live
       video, so you can line it up on the actual screen.
     - Output Placement shows the test pattern too, with the editor's

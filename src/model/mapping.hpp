@@ -99,7 +99,7 @@ struct RenderDisplay {
 	 * video), 2 slice outlines (drawn over live video). Bypasses delay. */
 	int identify = 0;
 	std::shared_ptr<const QImage> identifyImage;
-	std::shared_ptr<const QImage> identifyPreviewImage; /* pattern without slice outlines */
+	std::shared_ptr<const QImage> identifyPreviewImage; /* what the editor preview shows */
 };
 
 struct RenderState {

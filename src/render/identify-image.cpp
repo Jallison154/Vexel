@@ -62,14 +62,21 @@ static void drawSliceOutlines(QPainter &p, const DisplayMapping &d, bool dashed,
 	}
 }
 
-QImage makeTestPattern(const DisplayMapping &d, bool withSlices)
+/* One calibration pattern filling `area` (in image pixels): grid and rulers
+ * in area-local coordinates, corner markers, centre circle, name and size,
+ * and a red + white edge border on the area's outermost pixels. */
+static void paintPattern(QPainter &p, const QRect &area, const QString &name, const QString &sub, const QColor &accent,
+			 bool compact)
 {
-	const int w = std::max(16, d.width), h = std::max(16, d.height);
-	const int unit = std::max(10, std::min(w, h) / 40); /* ~27 px at 1080p */
-	QImage img(w, h, QImage::Format_ARGB32_Premultiplied);
-	img.fill(QColor(14, 15, 18));
-	QPainter p(&img);
+	const int w = area.width(), h = area.height();
+	if (w < 4 || h < 4)
+		return;
+	p.save();
+	p.setClipRect(area);
+	p.translate(area.topLeft());
+	const int unit = std::max(6, std::min(w, h) / 40); /* ~27 px at 1080p */
 	p.setRenderHint(QPainter::Antialiasing, false);
+	p.fillRect(0, 0, w, h, QColor(14, 15, 18));
 
 	/* Grid: every 100 px, brighter every 500 px. */
 	for (int x = 100; x < w; x += 100) {
@@ -81,7 +88,7 @@ QImage makeTestPattern(const DisplayMapping &d, bool withSlices)
 		p.drawLine(0, y, w - 1, y);
 	}
 
-	/* Rulers (pixel coordinates) along the top and left. */
+	/* Rulers (pixel coordinates within the area) along the top and left. */
 	p.setPen(QColor(150, 155, 165));
 	p.setFont(uiFont(unit / 2 + 4));
 	const int clear = unit * 5; /* keep numbers away from the corner markers */
@@ -93,7 +100,7 @@ QImage makeTestPattern(const DisplayMapping &d, bool withSlices)
 			p.drawText(6, y - 4, QString::number(y));
 
 	/* Centre: crosshair and circle. */
-	const int cx = w / 2, cy = h / 2, rad = h / 6;
+	const int cx = w / 2, cy = h / 2, rad = std::min(w, h) / 6;
 	p.setPen(QPen(QColor(255, 255, 255), 1));
 	p.drawLine(cx - rad - unit, cy, cx + rad + unit, cy);
 	p.drawLine(cx, cy - rad - unit, cx, cy + rad + unit);
@@ -101,10 +108,10 @@ QImage makeTestPattern(const DisplayMapping &d, bool withSlices)
 	p.drawEllipse(QPoint(cx, cy), rad, rad);
 	p.setRenderHint(QPainter::Antialiasing, false);
 
-	/* Corner markers (L shapes) and labels. */
+	/* Corner markers (L shapes). */
 	const int len = unit * 3, th = std::max(2, unit / 5), in = unit / 2;
 	p.setPen(Qt::NoPen);
-	p.setBrush(QColor(255, 196, 66));
+	p.setBrush(accent);
 	const QPoint corners[4] = {{in, in}, {w - in, in}, {in, h - in}, {w - in, h - in}};
 	for (int i = 0; i < 4; i++) {
 		const int sx = (i % 2) ? -1 : 1, sy = (i / 2) ? -1 : 1;
@@ -113,13 +120,8 @@ QImage makeTestPattern(const DisplayMapping &d, bool withSlices)
 		p.drawRect(QRect(sx > 0 ? c.x() : c.x() - th, sy > 0 ? c.y() : c.y() - len, th, len));
 	}
 
-	/* Slice placement on this display. */
-	p.setRenderHint(QPainter::Antialiasing, false);
-	if (withSlices)
-		drawSliceOutlines(p, d, true, unit);
-
-	/* Exact-edge border (drawn last so nothing covers it): outermost pixel red, next pixel white. If either
-	 * is missing on the screen, the display is cropping (overscan). */
+	/* Exact-edge border: outermost pixel red, next pixel white. If either is
+	 * missing on the screen, that edge is cropped. */
 	auto frame = [&](int inset, const QColor &col) {
 		p.fillRect(inset, inset, w - 2 * inset, 1, col);
 		p.fillRect(inset, h - 1 - inset, w - 2 * inset, 1, col);
@@ -133,14 +135,56 @@ QImage makeTestPattern(const DisplayMapping &d, bool withSlices)
 	p.setRenderHint(QPainter::TextAntialiasing, true);
 	p.setPen(QColor(255, 255, 255));
 	p.setFont(uiFont(unit * 3, true));
-	p.drawText(QRect(0, cy - rad - unit * 5, w, unit * 4), Qt::AlignCenter, d.name);
+	p.drawText(QRect(0, cy - rad - unit * 5, w, unit * 4), Qt::AlignCenter, name);
 	p.setFont(uiFont(unit * 2, false));
-	p.drawText(QRect(0, cy + rad + unit, w, unit * 3), Qt::AlignCenter,
-		   QStringLiteral("%1 × %2").arg(d.width).arg(d.height));
-	p.setPen(QColor(255, 196, 66));
+	p.drawText(QRect(0, cy + rad + unit, w, unit * 3), Qt::AlignCenter, sub);
+	if (!compact) {
+		p.setPen(accent);
+		p.setFont(uiFont(unit, true));
+		p.drawText(QRect(0, cy + rad + unit * 4, w, unit * 2), Qt::AlignCenter,
+			   QStringLiteral("VEXEL TEST PATTERN · red + white edge lines must be visible"));
+	}
+	p.restore();
+}
+
+QImage makeTestPattern(const DisplayMapping &d)
+{
+	const int w = std::max(16, d.width), h = std::max(16, d.height);
+	const int unit = std::max(10, std::min(w, h) / 40);
+	QImage img(w, h, QImage::Format_ARGB32_Premultiplied);
+	img.fill(QColor(0, 0, 0));
+	QPainter p(&img);
+
+	bool any = false;
+	for (const Slice &s : d.slices)
+		any = any || (s.enabled && s.dst.w > 0 && s.dst.h > 0);
+	if (!any) {
+		/* No slices yet: one pattern for the whole output. */
+		paintPattern(p, QRect(0, 0, w, h), d.name, QStringLiteral("%1 × %2").arg(d.width).arg(d.height),
+			     QColor(255, 196, 66), false);
+		p.end();
+		return img;
+	}
+
+	/* Area no slice covers: black, with the output's name in a corner so an
+	 * uncovered screen is still identifiable. */
+	p.setRenderHint(QPainter::TextAntialiasing, true);
+	p.setPen(QColor(110, 115, 125));
 	p.setFont(uiFont(unit, true));
-	p.drawText(QRect(0, cy + rad + unit * 4, w, unit * 2), Qt::AlignCenter,
-		   QStringLiteral("OUTPUT MAPPING TEST PATTERN · red + white edge lines must be visible"));
+	p.drawText(QRect(unit, unit, w - 2 * unit, h - 2 * unit), Qt::AlignRight | Qt::AlignBottom,
+		   QStringLiteral("%1 · %2 × %3 · no slice here").arg(d.name).arg(d.width).arg(d.height));
+
+	/* One pattern per slice, at the slice's exact output rect. Bottom-most
+	 * first so overlaps stack the same way the video does. */
+	for (auto it = d.slices.rbegin(); it != d.slices.rend(); ++it) {
+		if (!it->enabled || it->dst.w <= 0 || it->dst.h <= 0)
+			continue;
+		const IRect &r = it->dst;
+		const bool compact = std::min(r.w, r.h) < 400;
+		paintPattern(p, QRect(r.x, r.y, r.w, r.h), it->name,
+			     QStringLiteral("%1 × %2 @ %3, %4").arg(r.w).arg(r.h).arg(r.x).arg(r.y), it->color,
+			     compact);
+	}
 	p.end();
 	return img;
 }

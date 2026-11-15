@@ -9,8 +9,9 @@ the Free Software Foundation; either version 2 of the License, or
 */
 
 // CPU-drawn identify overlays for an output (UI thread, QPainter):
-//  - test pattern: full-frame calibration image (edges, grid, rulers,
-//    corners, centre, display name/resolution) plus slice outlines
+//  - test pattern: a calibration image (edges, grid, rulers, corners,
+//    centre, name/resolution) drawn at each slice's own size and position;
+//    the whole output when it has no slices
 //  - outlines: transparent overlay with slice outlines and labels
 
 #pragma once
@@ -21,9 +22,7 @@ the Free Software Foundation; either version 2 of the License, or
 
 namespace om {
 
-/* withSlices=false: clean pattern for the editor preview (the editor draws
- * its own interactive outlines on top). */
-QImage makeTestPattern(const DisplayMapping &d, bool withSlices = true);
+QImage makeTestPattern(const DisplayMapping &d);
 QImage makeOutlineOverlay(const DisplayMapping &d);
 
 } // namespace om

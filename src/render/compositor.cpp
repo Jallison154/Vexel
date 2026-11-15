@@ -266,9 +266,8 @@ void drawSlices(const ProgramFrame &pf, const RenderDisplay &rd)
 
 void drawDisplayLive(const ProgramFrame &pf, const RenderDisplay &rd)
 {
-	/* Editor preview: test pattern without its baked-in slice outlines (the
-	 * editor draws interactive ones); outlines mode shows live video and
-	 * relies on the editor's own outlines. */
+	/* Editor preview: the per-slice test pattern; outlines mode shows live
+	 * video and relies on the editor's own outlines. */
 	if (rd.identify == 1 && rd.identifyPreviewImage && !rd.identifyPreviewImage->isNull()) {
 		if (gs_texture_t *tex = identifyTexture(rd, true))
 			drawTexture(tex, 0.0f, 0.0f, (float)rd.width, (float)rd.height);

@@ -14,7 +14,9 @@ the Free Software Foundation; either version 2 of the License, or
 #include "render/identify-image.hpp"
 #include "ui/output-window.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -96,11 +98,24 @@ Controller::Controller(QObject *parent) : QObject(parent)
 	healthTimer_.start();
 
 	watchdog_.setInterval(250);
-	connect(&watchdog_, &QTimer::timeout, this, &Controller::verifyOutputs);
+	connect(&watchdog_, &QTimer::timeout, this, [this]() { verifyOutputs(true); });
 	installDisplayChangeHook([this]() {
-		/* Synchronous: runs before the OS/Qt shuffle windows around. */
-		verifyOutputs();
-		screenTimer_.start();
+		/* Called from inside the OS display-change message, which Windows
+		 * broadcasts to every top-level window, including our outputs.
+		 * Never stop (delete) an output from in here: queue the check so
+		 * it runs once the message has been fully dispatched. One check
+		 * covers a burst of these messages. */
+		if (displayCheckQueued_)
+			return;
+		displayCheckQueued_ = true;
+		QMetaObject::invokeMethod(
+			this,
+			[this]() {
+				displayCheckQueued_ = false;
+				verifyOutputs();
+				screenTimer_.start();
+			},
+			Qt::QueuedConnection);
 	});
 
 	refreshScreens();
@@ -125,6 +140,11 @@ void Controller::shutdown()
 		}
 	}
 	outputs_.clear();
+	/* Stopped outputs still waiting for deferred deletion: delete now,
+	 * while this plugin's code is still loaded. */
+	for (auto &w : retiring_)
+		delete w.data();
+	retiring_.clear();
 	watchdog_.stop();
 	removeDisplayChangeHook();
 	setDisplaySleepInhibited(false);
@@ -1031,14 +1051,9 @@ void Controller::publishRender()
 		rd.identify = (int)it.value();
 		rd.identifyImage = std::make_shared<const QImage>(
 			it.value() == Identify::Pattern ? makeTestPattern(*d) : makeOutlineOverlay(*d));
-		if (it.value() == Identify::Pattern) {
-			/* The preview's clean pattern only depends on name and size. */
-			const QString key = QStringLiteral("%1|%2x%3").arg(d->name).arg(d->width).arg(d->height);
-			auto &cached = previewPatterns_[d->id];
-			if (cached.first != key || !cached.second)
-				cached = {key, std::make_shared<const QImage>(makeTestPattern(*d, false))};
-			rd.identifyPreviewImage = cached.second;
-		}
+		/* The pattern is drawn per slice, so the editor preview shows the same image. */
+		if (it.value() == Identify::Pattern)
+			rd.identifyPreviewImage = rd.identifyImage;
 		++it;
 	}
 	RenderStore::instance().publish(st);
@@ -1198,8 +1213,17 @@ void Controller::stopOutput(const QString &displayId, bool userInitiated)
 	if (w) {
 		bool wasFullscreen = w->mode() == OutputWindow::Mode::Fullscreen;
 		w->closingFromCode_ = true;
+		/* Stop its video and hide it now, but delete the window later:
+		 * this can run inside a screen-removed signal or an OS display
+		 * message that is still using the window (deleting it there
+		 * crashes OBS). */
+		w->destroyDisplay();
 		w->hide();
-		delete w.data();
+		retiring_.erase(std::remove_if(retiring_.begin(), retiring_.end(),
+					       [](const QPointer<OutputWindow> &p) { return p.isNull(); }),
+				retiring_.end());
+		retiring_.push_back(w);
+		w->deleteLater();
 		if (wasFullscreen && userInitiated) {
 			if (DisplayMapping *d = doc_.display(displayId)) {
 				d->outputWanted = false;
@@ -1246,7 +1270,7 @@ OutputWindowOptions Controller::optionsFor(QScreen *target) const
 	return o;
 }
 
-void Controller::verifyOutputs()
+void Controller::verifyOutputs(bool fromWatchdog)
 {
 	if (shuttingDown_)
 		return;
@@ -1273,9 +1297,10 @@ void Controller::verifyOutputs()
 			continue;
 		}
 		/* Moved or resized by the OS (resolution change, taskbar, DPI): put
-		 * it back. If that keeps failing, hide it rather than show video in
-		 * the wrong place. */
-		if (++w->misplacedChecks > 8) {
+		 * it back. If that keeps failing for ~2 s of watchdog ticks, hide it
+		 * rather than show video in the wrong place. Only the 250 ms
+		 * watchdog counts: a burst of display-change checks must not. */
+		if (fromWatchdog && ++w->misplacedChecks > 8) {
 			blog(LOG_WARNING, "[output-mapping] output '%s' cannot be kept on its display; stopping it",
 			     qPrintable(it.key()));
 			toStop << it.key();

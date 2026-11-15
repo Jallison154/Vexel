@@ -924,8 +924,8 @@ QWidget *MappingEditor::buildInspector()
 
 	patternBtn_ = new QPushButton(QStringLiteral("Test Pattern"), displayBox_);
 	patternBtn_->setCheckable(true);
-	patternBtn_->setToolTip(QStringLiteral("Show a calibration pattern on this output (edges, grid, corners, "
-					       "centre, name) with slice outlines, to check it fits the screen"));
+	patternBtn_->setToolTip(QStringLiteral("Show a calibration pattern on each slice of this output, at the "
+					       "slice's own size and position (edges, grid, corners, centre, name)"));
 	outlinesBtn_ = new QPushButton(QStringLiteral("Slice Outlines"), displayBox_);
 	outlinesBtn_->setCheckable(true);
 	outlinesBtn_->setToolTip(
