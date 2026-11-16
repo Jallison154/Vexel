@@ -200,7 +200,20 @@ void Controller::select(const QString &displayId, const QString &sliceId)
 	if (d == selDisplay_ && s == selSlice_)
 		return;
 	selDisplay_ = d;
+	if (s != selSlice_)
+		selPoint_ = -1; /* the point belongs to the previous slice */
 	selSlice_ = s;
+	emit selectionChanged();
+}
+
+void Controller::selectWarpPoint(int index)
+{
+	const Slice *s = doc_.slice(selSlice_);
+	const int n = s ? s->warp.count() : 0;
+	const int v = (index >= 0 && index < n) ? index : -1;
+	if (v == selPoint_)
+		return;
+	selPoint_ = v;
 	emit selectionChanged();
 }
 
@@ -571,6 +584,8 @@ static QJsonObject sliceJson(const Slice &s, const QString &fromDisplay)
 			   {"src", r(s.src)},
 			   {"dst", r(s.dst)},
 			   {"enabled", s.enabled},
+			   {"warp", s.warp.active() ? QJsonValue(warpToJson(s.warp)) : QJsonValue()},
+			   {"feather", s.feather.active() ? QJsonValue(featherToJson(s.feather)) : QJsonValue()},
 			   {"fromDisplay", fromDisplay}};
 }
 
@@ -592,6 +607,8 @@ static bool clipboardSlice(Slice &out, QString &fromDisplay)
 	out.src = r(o.value("src"));
 	out.dst = r(o.value("dst"));
 	out.enabled = o.value("enabled").toBool(true);
+	out.warp = warpFromJson(o.value("warp"));
+	out.feather = featherFromJson(o.value("feather"));
 	fromDisplay = o.value("fromDisplay").toString();
 	return !out.src.empty() && !out.dst.empty();
 }
@@ -790,6 +807,75 @@ void Controller::setSliceDst(const QString &sliceId, const IRect &r)
 	if (!s || s->locked || r.empty() || s->dst == r)
 		return;
 	s->dst = r;
+	changed(Change::Geometry);
+}
+
+void Controller::setSliceWarpGrid(const QString &sliceId, int cols, int rows)
+{
+	Slice *s = doc_.slice(sliceId);
+	if (!s || s->locked)
+		return;
+	Warp w;
+	if (cols >= 2 && rows >= 2)
+		w = s->warp.active() ? resampleWarp(s->warp, cols, rows) : identityWarp(cols, rows);
+	if (w == s->warp)
+		return;
+	s->warp = w;
+	if (sliceId == selSlice_ && selPoint_ >= w.count())
+		selPoint_ = -1;
+	changed(Change::Structure);
+}
+
+void Controller::setSliceWarp(const QString &sliceId, const Warp &w)
+{
+	Slice *s = doc_.slice(sliceId);
+	if (!s || s->locked || s->warp == w || (w.cols != 0 && !w.active()))
+		return;
+	const bool gridChanged = s->warp.cols != w.cols || s->warp.rows != w.rows;
+	s->warp = w;
+	if (sliceId == selSlice_ && selPoint_ >= w.count())
+		selPoint_ = -1;
+	changed(gridChanged ? Change::Structure : Change::Geometry);
+}
+
+void Controller::resetWarp(const QString &sliceId)
+{
+	const Slice *s = doc_.slice(sliceId);
+	if (s && s->warp.active())
+		setSliceWarp(sliceId, identityWarp(s->warp.cols, s->warp.rows));
+}
+
+void Controller::setWarpPoint(const QString &sliceId, int index, const PointD &px)
+{
+	Slice *s = doc_.slice(sliceId);
+	if (!s || s->locked || index < 0 || index >= s->warp.count() || s->dst.empty())
+		return;
+	PointD n = pixelsToWarp(px, s->dst);
+	n.x = std::clamp(n.x, -10.0, 11.0);
+	n.y = std::clamp(n.y, -10.0, 11.0);
+	PointD &cur = s->warp.pts[(size_t)index];
+	if (cur.x == n.x && cur.y == n.y)
+		return;
+	cur = n;
+	changed(Change::Geometry);
+}
+
+void Controller::nudgeWarpPoint(const QString &sliceId, int index, double dx, double dy)
+{
+	const Slice *s = doc_.slice(sliceId);
+	if (!s || index < 0 || index >= s->warp.count())
+		return;
+	const PointD px = warpToPixels(s->warp.pts[(size_t)index], s->dst);
+	/* Snap to whole output pixels so arrow steps are exact. */
+	setWarpPoint(sliceId, index, {std::round(px.x) + dx, std::round(px.y) + dy});
+}
+
+void Controller::setSliceFeather(const QString &sliceId, const Feather &f)
+{
+	Slice *s = doc_.slice(sliceId);
+	if (!s || s->locked || s->feather == f)
+		return;
+	s->feather = f;
 	changed(Change::Geometry);
 }
 
@@ -1101,8 +1187,14 @@ void Controller::publishRender()
 		rd.identifyImage = std::make_shared<const QImage>(
 			it.value() == Identify::Pattern ? makeTestPattern(*d) : makeOutlineOverlay(*d));
 		/* The pattern is drawn per slice, so the editor preview shows the same image. */
-		if (it.value() == Identify::Pattern)
+		if (it.value() == Identify::Pattern) {
 			rd.identifyPreviewImage = rd.identifyImage;
+			/* Warped / soft-edged slices: their own pattern, warped on the GPU. */
+			for (RenderSlice &rs : rd.slices)
+				if (rs.mapped)
+					if (const Slice *sl = doc_.slice(QString::fromStdString(rs.id)))
+						rs.pattern = std::make_shared<const QImage>(makeSlicePattern(*sl));
+		}
 		++it;
 	}
 	RenderStore::instance().publish(st);
@@ -1705,6 +1797,7 @@ QJsonObject Controller::stateJson() const
 	o["programHeight"] = programH_;
 	o["selectedDisplay"] = selDisplay_;
 	o["selectedSlice"] = selSlice_;
+	o["selectedWarpPoint"] = selPoint_;
 	return o;
 }
 

@@ -1,0 +1,68 @@
+// Vexel projection mapping: draws a slice through its warp mesh, with soft
+// edges for projector blending.
+//
+// Vertices carry the output position and `loc`, the point's place across the
+// slice (0..1). The texture coordinate is derived from it, so a mesh can be
+// reused for the live Program (src_rect = the slice's crop) and for its test
+// pattern (src_rect = 0,0,1,1).
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 src_rect;    // x, y, w, h in texture coordinates
+uniform float4 feather;     // left, right, top, bottom, as a fraction of the slice (0 = off)
+uniform float blend_gamma;  // 1.0: overlapping ramps add up to constant light
+uniform float multiplier;
+
+sampler_state warp_sampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 loc : TEXCOORD0;
+};
+
+VertData VSWarp(VertData v)
+{
+	VertData o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.loc = v.loc;
+	return o;
+}
+
+// S-shaped ramp 0..1 over width w from an edge: f(t) + f(1 - t) == 1, so two
+// overlapping projectors sum to constant brightness.
+float ramp(float x, float w)
+{
+	if (w <= 0.0)
+		return 1.0;
+	float t = saturate(x / w);
+	return t < 0.5 ? 2.0 * t * t : 1.0 - 2.0 * (1.0 - t) * (1.0 - t);
+}
+
+float4 PSWarp(VertData v) : TARGET
+{
+	float2 uv = src_rect.xy + v.loc * src_rect.zw;
+	float4 c = image.Sample(warp_sampler, uv);
+	// Outside the texture (crop past the canvas): black, like plain slices.
+	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0)
+		c = float4(0.0, 0.0, 0.0, 1.0);
+	float b = ramp(v.loc.x, feather.x) * ramp(1.0 - v.loc.x, feather.y) *
+		  ramp(v.loc.y, feather.z) * ramp(1.0 - v.loc.y, feather.w);
+	if (b > 0.0 && blend_gamma != 1.0)
+		b = pow(b, blend_gamma);
+	c.rgb *= b * multiplier;
+	c.a = 1.0;
+	return c;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSWarp(v);
+		pixel_shader  = PSWarp(v);
+	}
+}

@@ -3,6 +3,7 @@
 
 #include "core/geometry.hpp"
 #include "core/display-match.hpp"
+#include "core/warp.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -172,8 +173,99 @@ static void test_matching()
 	CHECK(m.status == MatchStatus::Unassigned);
 }
 
+static bool near(double a, double b, double eps = 1e-6)
+{
+	return std::fabs(a - b) <= eps;
+}
+
+static void test_warp()
+{
+	/* Identity grids map every point to itself (corner pin and mesh). */
+	for (int n : {2, 3, 5, 9}) {
+		Warp w = identityWarp(n, n);
+		CHECK(w.active() && isIdentityWarp(w));
+		for (double u : {0.0, 0.13, 0.5, 0.77, 1.0})
+			for (double v : {0.0, 0.29, 0.5, 1.0}) {
+				PointD p = evalWarp(w, u, v);
+				CHECK(near(p.x, u) && near(p.y, v));
+			}
+	}
+	CHECK(!Warp{}.active());
+	CHECK(identityWarp(1, 20).cols == 2 && identityWarp(1, 20).rows == kMaxWarpGrid);
+
+	/* Corner pin passes exactly through its four corners and is a true
+	 * perspective: straight lines stay straight, the centre is where the
+	 * diagonals cross (not the average of the corners). */
+	Warp cp = identityWarp(2, 2);
+	cp.pts = {{0.1, 0.0}, {0.9, 0.2}, {0.0, 1.0}, {1.0, 0.8}};
+	CHECK(cp.cornerPin() && !isIdentityWarp(cp));
+	PointD c00 = evalWarp(cp, 0, 0), c11 = evalWarp(cp, 1, 1), c10 = evalWarp(cp, 1, 0);
+	CHECK(near(c00.x, 0.1) && near(c00.y, 0.0) && near(c11.x, 1.0) && near(c11.y, 0.8) && near(c10.x, 0.9));
+	PointD a = evalWarp(cp, 0.25, 0), b = evalWarp(cp, 0.75, 0);
+	PointD m = evalWarp(cp, 0.5, 0); /* top edge stays a straight line */
+	const double cross = (b.x - a.x) * (m.y - a.y) - (b.y - a.y) * (m.x - a.x);
+	CHECK(near(cross, 0.0, 1e-9));
+	/* centre == intersection of the diagonals */
+	auto inter = [](PointD p1, PointD p2, PointD p3, PointD p4) {
+		double d = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+		double t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / d;
+		return PointD{p1.x + t * (p2.x - p1.x), p1.y + t * (p2.y - p1.y)};
+	};
+	PointD ctr = evalWarp(cp, 0.5, 0.5), want = inter(cp.pts[0], cp.pts[3], cp.pts[1], cp.pts[2]);
+	CHECK(near(ctr.x, want.x, 1e-9) && near(ctr.y, want.y, 1e-9));
+
+	/* Mesh passes through every control point and keeps a moved point. */
+	Warp mesh = identityWarp(4, 3);
+	mesh.pts[5] = {0.40, 0.62}; /* col 1, row 1 */
+	for (int r = 0; r < mesh.rows; r++)
+		for (int c = 0; c < mesh.cols; c++) {
+			PointD p = evalWarp(mesh, (double)c / (mesh.cols - 1), (double)r / (mesh.rows - 1));
+			CHECK(near(p.x, mesh.at(c, r).x, 1e-9) && near(p.y, mesh.at(c, r).y, 1e-9));
+		}
+	/* Linear (affine) layouts are reproduced exactly between points too. */
+	Warp lin = identityWarp(5, 5);
+	for (PointD &p : lin.pts)
+		p = {0.2 + 0.5 * p.x + 0.1 * p.y, 0.1 + 0.7 * p.y};
+	PointD q = evalWarp(lin, 0.37, 0.61);
+	CHECK(near(q.x, 0.2 + 0.5 * 0.37 + 0.1 * 0.61, 1e-9) && near(q.y, 0.1 + 0.7 * 0.61, 1e-9));
+
+	/* Resampling keeps the shape: corner pin -> 5x5 mesh -> corner pin. */
+	Warp up = resampleWarp(cp, 5, 5);
+	CHECK(up.cols == 5 && up.rows == 5);
+	PointD u1 = evalWarp(up, 0, 0), u2 = evalWarp(up, 1, 1), u3 = evalWarp(up, 0.5, 0.5);
+	CHECK(near(u1.x, 0.1) && near(u2.y, 0.8) && near(u3.x, ctr.x, 1e-9));
+	Warp back = resampleWarp(up, 2, 2);
+	for (int i = 0; i < 4; i++)
+		CHECK(near(back.pts[(size_t)i].x, cp.pts[(size_t)i].x, 1e-9) &&
+		      near(back.pts[(size_t)i].y, cp.pts[(size_t)i].y, 1e-9));
+
+	/* Pixels <-> normalised follow the output rect (warp moves with it). */
+	IRect r{100, 50, 400, 200};
+	PointD px = warpToPixels({0.25, 0.5}, r), nb = pixelsToWarp(px, r);
+	CHECK(near(px.x, 200) && near(px.y, 150) && near(nb.x, 0.25) && near(nb.y, 0.5));
+
+	/* Outline + hit test, triangles cover the slice with u,v in 0..1. */
+	std::vector<PointD> ol = warpOutline(cp);
+	CHECK(ol.size() == 4 && pointInPolygon(ol, 0.5, 0.5) && !pointInPolygon(ol, 0.02, 0.5));
+	std::vector<float> tri = warpTriangles(identityWarp(2, 2), {0, 0, 100, 50});
+	CHECK(tri.size() % 24 == 0 && !tri.empty());
+	float minx = 1e9f, maxx = -1e9f, maxu = 0;
+	for (size_t i = 0; i < tri.size(); i += 4) {
+		minx = std::min(minx, tri[i]);
+		maxx = std::max(maxx, tri[i]);
+		maxu = std::max(maxu, tri[i + 2]);
+	}
+	CHECK(near(minx, 0) && near(maxx, 100) && near(maxu, 1));
+
+	Feather f;
+	CHECK(!f.active());
+	f.right = 120;
+	CHECK(f.active());
+}
+
 int main()
 {
+	test_warp();
 	test_two_display_example();
 	test_defaults_and_fit();
 	test_clip();

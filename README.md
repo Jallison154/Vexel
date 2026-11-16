@@ -37,6 +37,30 @@ is the place they would go).
 
 ## Features
 
+- **Projection mapping** (per slice, in the slice panel under *Projection
+  mapping*):
+  - **Corner pin:** drag the slice's 4 corners in Output Placement to fit any
+    4-sided surface (a tilted screen, a building face, a projector at an
+    angle). True perspective, not a stretch.
+  - **Mesh warp** (3×3 up to 9×9 points): bend the slice for curved or
+    uneven surfaces. The picture passes smoothly through every point.
+    Switching between corner pin and mesh sizes keeps the current shape.
+  - **Soft edges** for projector blending: a width in output pixels for each
+    side (left, right, top, bottom) and an *Edge gamma*. At 1.00 two
+    overlapping edges add up to even brightness.
+  - **Editing:** click a point (or drag it) in Output Placement. **Arrow keys
+    move the selected point 1 px, Shift+arrows 10 px**, Tab steps to the
+    next point, Esc lets go of it (arrows then move the whole slice again).
+    The selected point's exact X / Y can also be typed in. *Reset* puts the
+    points back on the rectangle. All of it is undoable.
+  - The warp is stored relative to the slice's output rectangle, so moving
+    or resizing the slice carries it along.
+  - Works everywhere the slice goes: fullscreen and windowed outputs, NDI,
+    delay, dock previews and snapshots. The **test pattern and slice
+    outlines follow the warp**, so you can line the grid up on the real
+    surface. An untouched corner pin or mesh is still a pixel-exact 1:1
+    copy.
+
 - **NDI outputs** (*＋ Display ▸ NDI Output…*, or pick *NDI (network
   source)* under *Output to*): a display with a resolution you choose that
   goes out over the network as an NDI source instead of to a screen.
@@ -366,6 +390,15 @@ mkdir -p ~/Library/Application\ Support/obs-studio/plugins && ditto ~/Library/Ca
 
   The harness currently launches OBS the macOS way; on Windows, run the
   steps in [docs/windows-test-plan.md](docs/windows-test-plan.md).
+- Projection mapping end-to-end test (`tools/warp_test.py`): a smooth
+  gradient as Program, so every warped pixel can be checked against the
+  Program point it should come from (Python homography). Covers corner pin
+  perspective, mesh, editor point drag, arrow-key nudges, Tab, Esc, undo,
+  soft edges, the warped test pattern and persistence:
+
+  ```bash
+  python3 tools/warp_test.py --obs-app /Applications/OBS.app --work /tmp/omwarp
+  ```
 - NDI end-to-end test (`tools/ndi_test.py`): runs OBS with a stand-in NDI
   library (`tools/ndi_stub.cpp`) that records every frame Vexel would send,
   and checks format, frame rate, pixel-exact content, delay, test pattern,
@@ -440,6 +473,10 @@ Vendor name `output-mapping`, called via `CallVendorRequest`:
 | `SetDelay` | `{displayName, delayMs}` | Per-output video delay (0 = live); changes crossfade (0.5 s) |
 | `SetIdentify` | `{displayName, mode: pattern / outlines / off}` or `{mode: clear}` | Test pattern / slice outlines on an output |
 | `SetSliceLocked` | `{sliceName` or `sliceId, locked}` | Lock or unlock a slice |
+| `SetSliceWarp` | `{sliceName, cols, rows[, points: [{x, y}]]}` | Corner pin (2×2) or mesh (up to 9×9); points relative to the output rect; `cols: 0` = off; without points the shape is kept |
+| `SetWarpPoint` | `{sliceName, index, x, y}` or `{…, dx, dy}` | Move or nudge one warp point (output pixels) |
+| `SelectWarpPoint` | `{sliceName, index}` | Select a point (‑1 = none), as when clicking it in the editor |
+| `SetSliceFeather` | `{sliceName, left, right, top, bottom, gamma}` | Soft edges (output pixels) |
 | `Snapshot` | `{displayName, path}` | Render exactly what the display receives to `.png` / `.ppm` |
 | `OpenEditor` / `CloseEditor` / `Select` | … | Editor control |
 | `EditorDrag` / `EditorKey` | … | Automation only: needs `OUTPUT_MAPPING_AUTOMATION=1`. Feeds synthetic mouse and keyboard events to the real editor handlers. |
@@ -447,7 +484,7 @@ Vendor name `output-mapping`, called via `CallVendorRequest`:
 ## Source layout
 
 ```
-src/core/            geometry.hpp (drag/resize/snap/clip math), display-match.hpp (identity rules); pure C++, unit tested
+src/core/            geometry.hpp (drag/resize/snap/clip math), display-match.hpp (identity rules), warp.hpp (corner pin / mesh / soft edge); pure C++, unit tested
 src/model/           mapping document, JSON, immutable render snapshot shared with the graphics thread
 src/render/          GPU compositor (slices, overlays, snapshots, NDI frame readback)
 src/output/          NDI sender (loads the NDI Runtime at run time, sends from a worker thread)

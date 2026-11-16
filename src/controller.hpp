@@ -115,6 +115,19 @@ public:
 	void setSliceDst(const QString &sliceId, const IRect &r);
 	void moveSlice(const QString &sliceId, const QString &toDisplayId, int index);
 	void fitSliceToDisplay(const QString &sliceId);
+
+	/* -- projection mapping (per slice; refused for locked slices) --
+	 * Warp points are relative to the slice's output rect, so moving or
+	 * resizing the slice carries the warp along. Undoable; drags and
+	 * nudges coalesce like other geometry edits. */
+	void setSliceWarpGrid(const QString &sliceId, int cols, int rows); /* 0 = off; keeps the shape */
+	void setSliceWarp(const QString &sliceId, const Warp &w);          /* exact points */
+	void resetWarp(const QString &sliceId);                            /* back to a plain rectangle */
+	void setWarpPoint(const QString &sliceId, int index, const PointD &outputPx);
+	void nudgeWarpPoint(const QString &sliceId, int index, double dx, double dy); /* output px */
+	void setSliceFeather(const QString &sliceId, const Feather &f);
+	int selectedWarpPoint() const { return selPoint_; } /* -1 = none */
+	void selectWarpPoint(int index);
 	void sliceOneToOne(const QString &sliceId);
 
 	void replaceDocument(const MappingDocument &doc);
@@ -204,6 +217,7 @@ private:
 
 	MappingDocument doc_;
 	QString selDisplay_, selSlice_;
+	int selPoint_ = -1;
 	std::vector<ScreenInfo> screens_;
 	QHash<QString, DisplayStatus> statuses_;
 	QHash<QString, QPointer<OutputWindow>> outputs_;

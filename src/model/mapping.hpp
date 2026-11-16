@@ -12,6 +12,7 @@ the Free Software Foundation; either version 2 of the License, or
 
 #include "core/geometry.hpp"
 #include "core/display-match.hpp"
+#include "core/warp.hpp"
 
 #include <QColor>
 #include <QImage>
@@ -36,7 +37,20 @@ struct Slice {
 	IRect dst;
 	bool enabled = true;
 	bool locked = false; /* protects geometry, display and deletion */
+	Warp warp;           /* projection mapping: corner pin / mesh (inactive = plain rect) */
+	Feather feather;     /* soft edges for projector blending */
 };
+
+/* Slices that need the warp/soft-edge renderer (otherwise a plain blit). */
+inline bool sliceIsMapped(const Slice &s)
+{
+	return (s.warp.active() && !isIdentityWarp(s.warp)) || s.feather.active();
+}
+
+QJsonObject warpToJson(const Warp &w);
+Warp warpFromJson(const QJsonValue &v);
+QJsonObject featherToJson(const Feather &f);
+Feather featherFromJson(const QJsonValue &v);
 
 enum class DisplayKind {
 	Physical, /* bound to a real monitor/HDMI output by identity      */
@@ -95,6 +109,13 @@ QString newId();
 struct RenderSlice {
 	IRect src;
 	IRect dst;
+	std::string id;
+	/* Warp / soft edge (mapped == false: plain blit of src onto dst). */
+	bool mapped = false;
+	std::shared_ptr<const std::vector<float>> tris; /* x, y (output px), u, v (0..1) per vertex */
+	float feather[4] = {0, 0, 0, 0};                /* left, right, top, bottom as a fraction of the slice */
+	float gamma = 1.0f;
+	std::shared_ptr<const QImage> pattern; /* test pattern for this slice when identify is on */
 };
 
 struct RenderDisplay {

@@ -22,7 +22,10 @@ the Free Software Foundation; either version 2 of the License, or
 
 namespace om {
 
-QImage makeTestPattern(const DisplayMapping &d);
+QImage makeTestPattern(const DisplayMapping &d); /* leaves warped / soft-edged slices to makeSlicePattern */
+/* Pattern for one slice at its output size, before warping (the renderer
+ * draws it through the slice's warp and soft edges). */
+QImage makeSlicePattern(const Slice &s);
 QImage makeOutlineOverlay(const DisplayMapping &d);
 
 } // namespace om

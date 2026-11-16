@@ -30,6 +30,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QDir>
 #include <QActionGroup>
 #include <QDropEvent>
@@ -869,6 +870,87 @@ QWidget *MappingEditor::buildInspector()
 	sb->addWidget(upBtn, 1, 0);
 	sb->addWidget(downBtn, 1, 1);
 	sv->addLayout(sb);
+
+	/* ---- projection mapping ---- */
+	auto *pmHead = new QLabel(QStringLiteral("PROJECTION MAPPING"), sliceBox_);
+	pmHead->setObjectName("SectionHint");
+	sv->addSpacing(6);
+	sv->addWidget(pmHead);
+	auto *pm = new QFormLayout();
+	pm->setLabelAlignment(Qt::AlignRight);
+	pm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+	auto *warpRow = new QHBoxLayout();
+	warpMode_ = new QComboBox(sliceBox_);
+	warpMode_->setToolTip(QStringLiteral("Corner pin: drag the 4 corners to fit any 4-sided surface (with "
+					     "perspective).\nMesh: a grid of points you can bend for curved or "
+					     "uneven surfaces."));
+	warpMode_->addItem(QStringLiteral("Off (rectangle)"), QPoint(0, 0));
+	warpMode_->addItem(QStringLiteral("Corner pin"), QPoint(2, 2));
+	for (int n : {3, 4, 5, 7, 9})
+		warpMode_->addItem(QStringLiteral("Mesh %1 × %1").arg(n), QPoint(n, n));
+	warpReset_ = new QPushButton(QStringLiteral("Reset"), sliceBox_);
+	warpReset_->setToolTip(QStringLiteral("Put every point back on the slice's rectangle"));
+	warpRow->addWidget(warpMode_, 1);
+	warpRow->addWidget(warpReset_);
+	pm->addRow(QStringLiteral("Warp"), warpRow);
+	warpPointRow_ = new QWidget(sliceBox_);
+	auto *pr = new QHBoxLayout(warpPointRow_);
+	pr->setContentsMargins(0, 0, 0, 0);
+	warpPointLbl_ = new QLabel(warpPointRow_);
+	warpPointLbl_->setObjectName("SectionHint");
+	auto makeD = [this](QWidget *parent) {
+		auto *d = new QDoubleSpinBox(parent);
+		d->setRange(-65535, 65535);
+		d->setDecimals(1);
+		d->setSingleStep(1.0);
+		d->setKeyboardTracking(false);
+		d->setButtonSymbols(QAbstractSpinBox::NoButtons);
+		d->setAlignment(Qt::AlignRight);
+		d->setMinimumWidth(56);
+		return d;
+	};
+	warpX_ = makeD(warpPointRow_);
+	warpY_ = makeD(warpPointRow_);
+	warpX_->setToolTip(QStringLiteral("Selected point, output pixels"));
+	warpY_->setToolTip(QStringLiteral("Selected point, output pixels"));
+	pr->addWidget(warpPointLbl_);
+	pr->addWidget(new QLabel(QStringLiteral("X"), warpPointRow_));
+	pr->addWidget(warpX_, 1);
+	pr->addWidget(new QLabel(QStringLiteral("Y"), warpPointRow_));
+	pr->addWidget(warpY_, 1);
+	pm->addRow(QStringLiteral("Point"), warpPointRow_);
+	warpHint_ = new QLabel(QStringLiteral("Click a point in Output Placement and drag it. Arrow keys move "
+					      "it 1 px (Shift: 10 px), Tab picks the next point, Esc lets go."),
+			       sliceBox_);
+	warpHint_->setWordWrap(true);
+	warpHint_->setObjectName("SectionHint");
+	pm->addRow(warpHint_);
+
+	auto *fg = new QGridLayout();
+	fg->setHorizontalSpacing(4);
+	const char *fheads[] = {"Left", "Right", "Top", "Bottom"};
+	for (int i = 0; i < 4; i++) {
+		auto *h = new QLabel(QString::fromLatin1(fheads[i]), sliceBox_);
+		h->setAlignment(Qt::AlignCenter);
+		h->setObjectName("SectionHint");
+		fg->addWidget(h, 0, i);
+		feather_[i] = makeSpin(sliceBox_, 0);
+		feather_[i]->setMaximum(8192);
+		feather_[i]->setToolTip(QStringLiteral("Soft edge width in output pixels (0 = hard edge). Use it "
+						       "where two projectors overlap."));
+		fg->addWidget(feather_[i], 1, i);
+	}
+	pm->addRow(QStringLiteral("Soft edge"), fg);
+	featherGamma_ = new QDoubleSpinBox(sliceBox_);
+	featherGamma_->setRange(0.2, 5.0);
+	featherGamma_->setSingleStep(0.05);
+	featherGamma_->setDecimals(2);
+	featherGamma_->setKeyboardTracking(false);
+	featherGamma_->setToolTip(QStringLiteral("Blend curve. 1.00 = the two overlapping edges add up to even "
+						 "brightness; raise or lower it if the overlap looks too bright or "
+						 "dark on your projectors."));
+	pm->addRow(QStringLiteral("Edge gamma"), featherGamma_);
+	sv->addLayout(pm);
 	v->addWidget(sliceBox_);
 
 	/* ---- display ---- */
@@ -1005,6 +1087,34 @@ QWidget *MappingEditor::buildInspector()
 				pushDstFromFields(i == 2, i == 3);
 		});
 	}
+	connect(warpMode_, qOverload<int>(&QComboBox::activated), this, [this](int idx) {
+		const QPoint g = warpMode_->itemData(idx).toPoint();
+		c_->setSliceWarpGrid(c_->selectedSlice(), g.x(), g.y());
+		if (g.x() >= 2)
+			c_->selectWarpPoint(0); /* ready for arrow keys */
+	});
+	connect(warpReset_, &QPushButton::clicked, this, [this]() { c_->resetWarp(c_->selectedSlice()); });
+	auto pushPoint = [this](double) {
+		if (updating_ || c_->selectedWarpPoint() < 0)
+			return;
+		c_->setWarpPoint(c_->selectedSlice(), c_->selectedWarpPoint(), {warpX_->value(), warpY_->value()});
+	};
+	connect(warpX_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, pushPoint);
+	connect(warpY_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, pushPoint);
+	auto pushFeather = [this]() {
+		if (updating_)
+			return;
+		Feather f;
+		f.left = feather_[0]->value();
+		f.right = feather_[1]->value();
+		f.top = feather_[2]->value();
+		f.bottom = feather_[3]->value();
+		f.gamma = featherGamma_->value();
+		c_->setSliceFeather(c_->selectedSlice(), f);
+	};
+	for (QSpinBox *f : feather_)
+		connect(f, qOverload<int>(&QSpinBox::valueChanged), this, pushFeather);
+	connect(featherGamma_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, pushFeather);
 	connect(fitBtn, &QPushButton::clicked, this, [this]() { c_->fitSliceToDisplay(c_->selectedSlice()); });
 	connect(oneBtn, &QPushButton::clicked, this, [this]() { c_->sliceOneToOne(c_->selectedSlice()); });
 	connect(upBtn, &QPushButton::clicked, this, [this]() { moveSelectedSlice(-1); });
@@ -1281,6 +1391,38 @@ void MappingEditor::updateInspector()
 			src_[i]->setValue(sv[i]);
 			dst_[i]->setValue(dv[i]);
 		}
+		/* projection mapping */
+		int mi = 0;
+		for (int i = 0; i < warpMode_->count(); i++)
+			if (warpMode_->itemData(i).toPoint() == QPoint(s->warp.cols, s->warp.rows))
+				mi = i;
+		warpMode_->setCurrentIndex(mi);
+		warpMode_->setEnabled(!s->locked);
+		warpReset_->setEnabled(!s->locked && s->warp.active() && !isIdentityWarp(s->warp));
+		const int sp = c_->selectedWarpPoint();
+		warpPointRow_->setVisible(s->warp.active());
+		warpHint_->setVisible(s->warp.active());
+		const bool havePoint = s->warp.active() && sp >= 0 && sp < s->warp.count();
+		warpX_->setEnabled(havePoint && !s->locked);
+		warpY_->setEnabled(havePoint && !s->locked);
+		if (havePoint) {
+			const PointD px = warpToPixels(s->warp.pts[(size_t)sp], s->dst);
+			warpPointLbl_->setText(QStringLiteral("%1 of %2").arg(sp + 1).arg(s->warp.count()));
+			if (!warpX_->hasFocus())
+				warpX_->setValue(px.x);
+			if (!warpY_->hasFocus())
+				warpY_->setValue(px.y);
+		} else {
+			warpPointLbl_->setText(QStringLiteral("none"));
+		}
+		const int fv[4] = {s->feather.left, s->feather.right, s->feather.top, s->feather.bottom};
+		for (int i = 0; i < 4; i++) {
+			feather_[i]->setValue(fv[i]);
+			feather_[i]->setEnabled(!s->locked);
+		}
+		featherGamma_->setValue(s->feather.gamma);
+		featherGamma_->setEnabled(!s->locked);
+
 		const bool oneToOne = s->src.w == s->dst.w && s->src.h == s->dst.h;
 		if (oneToOne)
 			scaleLabel_->setText(

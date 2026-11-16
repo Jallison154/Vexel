@@ -14,6 +14,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QFontMetrics>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPolygonF>
 
 #include <algorithm>
 
@@ -56,7 +57,19 @@ static void drawSliceOutlines(QPainter &p, const DisplayMapping &d, bool dashed,
 		QColor fill = it->color;
 		fill.setAlpha(dashed ? 0 : 28);
 		p.setBrush(fill);
-		p.drawRect(QRect(r.x, r.y, r.w - 1, r.h - 1));
+		if (it->warp.active() && !isIdentityWarp(it->warp)) {
+			/* The real (warped) shape on the output. */
+			QPolygonF poly;
+			for (const PointD &n : warpOutline(it->warp, 48)) {
+				const PointD px = warpToPixels(n, r);
+				poly << QPointF(px.x, px.y);
+			}
+			p.setRenderHint(QPainter::Antialiasing, true);
+			p.drawPolygon(poly);
+			p.setRenderHint(QPainter::Antialiasing, false);
+		} else {
+			p.drawRect(QRect(r.x, r.y, r.w - 1, r.h - 1));
+		}
 		drawLabel(p, r.x + unit / 2, r.y + unit / 2,
 			  QStringLiteral("%1  %2×%3").arg(it->name).arg(r.w).arg(r.h), it->color, unit);
 	}
@@ -158,6 +171,8 @@ QImage makeTestPattern(const DisplayMapping &d)
 	bool any = false;
 	for (const Slice &s : d.slices)
 		any = any || (s.enabled && s.dst.w > 0 && s.dst.h > 0);
+	/* Warped / soft-edged slices get their own pattern (makeSlicePattern),
+	 * drawn through the warp on the GPU; leave their area to them. */
 	if (!any) {
 		/* No slices yet: one pattern for the whole output. */
 		paintPattern(p, QRect(0, 0, w, h), d.name, QStringLiteral("%1 × %2").arg(d.width).arg(d.height),
@@ -177,7 +192,7 @@ QImage makeTestPattern(const DisplayMapping &d)
 	/* One pattern per slice, at the slice's exact output rect. Bottom-most
 	 * first so overlaps stack the same way the video does. */
 	for (auto it = d.slices.rbegin(); it != d.slices.rend(); ++it) {
-		if (!it->enabled || it->dst.w <= 0 || it->dst.h <= 0)
+		if (!it->enabled || it->dst.w <= 0 || it->dst.h <= 0 || sliceIsMapped(*it))
 			continue;
 		const IRect &r = it->dst;
 		const bool compact = std::min(r.w, r.h) < 400;
@@ -185,6 +200,21 @@ QImage makeTestPattern(const DisplayMapping &d)
 			     QStringLiteral("%1 × %2 @ %3, %4").arg(r.w).arg(r.h).arg(r.x).arg(r.y), it->color,
 			     compact);
 	}
+	p.end();
+	return img;
+}
+
+QImage makeSlicePattern(const Slice &s)
+{
+	const int w = std::clamp(s.dst.w, 16, 8192), h = std::clamp(s.dst.h, 16, 8192);
+	QImage img(w, h, QImage::Format_ARGB32_Premultiplied);
+	img.fill(QColor(0, 0, 0));
+	QPainter p(&img);
+	QString sub = QStringLiteral("%1 × %2").arg(s.dst.w).arg(s.dst.h);
+	if (s.warp.active() && !isIdentityWarp(s.warp))
+		sub += s.warp.cornerPin() ? QStringLiteral(" · corner pin")
+					  : QStringLiteral(" · mesh %1×%2").arg(s.warp.cols).arg(s.warp.rows);
+	paintPattern(p, QRect(0, 0, w, h), s.name, sub, s.color, std::min(w, h) < 400);
 	p.end();
 	return img;
 }

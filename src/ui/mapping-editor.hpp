@@ -29,6 +29,8 @@ class QSplitter;
 class QStackedWidget;
 class QToolButton;
 
+class QDoubleSpinBox;
+
 namespace om {
 
 class PreviewView;
@@ -133,6 +135,14 @@ private:
 	QSpinBox *src_[4] = {};
 	QSpinBox *dst_[4] = {};
 	QCheckBox *lockCheck_ = nullptr;
+	/* projection mapping */
+	QComboBox *warpMode_ = nullptr;
+	QPushButton *warpReset_ = nullptr;
+	QLabel *warpPointLbl_ = nullptr, *warpHint_ = nullptr;
+	QDoubleSpinBox *warpX_ = nullptr, *warpY_ = nullptr;
+	QSpinBox *feather_[4] = {nullptr, nullptr, nullptr, nullptr};
+	QDoubleSpinBox *featherGamma_ = nullptr;
+	QWidget *warpPointRow_ = nullptr;
 	QLabel *scaleLabel_ = nullptr;
 
 	/* display inspector */

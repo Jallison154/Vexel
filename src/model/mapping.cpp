@@ -10,6 +10,8 @@ the Free Software Foundation; either version 2 of the License, or
 
 #include "model/mapping.hpp"
 
+#include <cmath>
+
 #include <QJsonArray>
 #include <QUuid>
 
@@ -117,13 +119,60 @@ static IRect rectFromJson(const QJsonValue &v)
 	return {a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt()};
 }
 
+QJsonObject warpToJson(const Warp &w)
+{
+	QJsonArray pts;
+	for (const PointD &p : w.pts)
+		pts.append(QJsonObject{{"x", p.x}, {"y", p.y}}); /* objects: obs_data has no scalar arrays */
+	return QJsonObject{{"cols", w.cols}, {"rows", w.rows}, {"points", pts}};
+}
+
+Warp warpFromJson(const QJsonValue &v)
+{
+	Warp w;
+	const QJsonObject o = v.toObject();
+	w.cols = o.value("cols").toInt(0);
+	w.rows = o.value("rows").toInt(0);
+	for (const QJsonValue pv : o.value("points").toArray()) {
+		const QJsonObject po = pv.toObject();
+		const double x = po.value("x").toDouble(), y = po.value("y").toDouble();
+		w.pts.push_back({std::isfinite(x) ? std::clamp(x, -10.0, 11.0) : 0.0,
+				 std::isfinite(y) ? std::clamp(y, -10.0, 11.0) : 0.0});
+	}
+	if (!w.active())
+		return Warp{}; /* malformed: no warp rather than garbage */
+	return w;
+}
+
+QJsonObject featherToJson(const Feather &f)
+{
+	return QJsonObject{{"left", f.left},
+			   {"right", f.right},
+			   {"top", f.top},
+			   {"bottom", f.bottom},
+			   {"gamma", f.gamma}};
+}
+
+Feather featherFromJson(const QJsonValue &v)
+{
+	Feather f;
+	const QJsonObject o = v.toObject();
+	f.left = std::clamp(o.value("left").toInt(0), 0, 8192);
+	f.right = std::clamp(o.value("right").toInt(0), 0, 8192);
+	f.top = std::clamp(o.value("top").toInt(0), 0, 8192);
+	f.bottom = std::clamp(o.value("bottom").toInt(0), 0, 8192);
+	const double g = o.value("gamma").toDouble(1.0);
+	f.gamma = std::isfinite(g) ? std::clamp(g, 0.2, 5.0) : 1.0;
+	return f;
+}
+
 QJsonObject MappingDocument::toJson() const
 {
 	QJsonArray ds;
 	for (const auto &d : displays) {
 		QJsonArray ss;
 		for (const auto &s : d.slices) {
-			ss.append(QJsonObject{
+			QJsonObject so{
 				{"id", s.id},
 				{"name", s.name},
 				{"color", s.color.name()},
@@ -131,7 +180,12 @@ QJsonObject MappingDocument::toJson() const
 				{"dst", rectToJson(s.dst)},
 				{"enabled", s.enabled},
 				{"locked", s.locked},
-			});
+			};
+			if (s.warp.active())
+				so["warp"] = warpToJson(s.warp);
+			if (s.feather.active())
+				so["feather"] = featherToJson(s.feather);
+			ss.append(so);
 		}
 		QJsonObject ident{
 			{"uuid", QString::fromStdString(d.identity.uuid)},
@@ -201,6 +255,8 @@ MappingDocument MappingDocument::fromJson(const QJsonObject &obj)
 			s.dst = rectFromJson(so.value("dst"));
 			s.enabled = so.value("enabled").toBool(true);
 			s.locked = so.value("locked").toBool(false);
+			s.warp = warpFromJson(so.value("warp"));
+			s.feather = featherFromJson(so.value("feather"));
 			d.slices.push_back(s);
 		}
 		doc.displays.push_back(std::move(d));
@@ -252,7 +308,20 @@ std::shared_ptr<const RenderState> buildRenderState(const MappingDocument &doc)
 		for (auto it = d.slices.rbegin(); it != d.slices.rend(); ++it) {
 			if (!it->enabled || it->src.empty() || it->dst.empty())
 				continue;
-			rd.slices.push_back({it->src, it->dst});
+			RenderSlice rs;
+			rs.src = it->src;
+			rs.dst = it->dst;
+			rs.id = it->id.toStdString();
+			rs.mapped = sliceIsMapped(*it);
+			if (rs.mapped) {
+				rs.tris = std::make_shared<const std::vector<float>>(warpTriangles(it->warp, it->dst));
+				rs.feather[0] = it->dst.w > 0 ? (float)it->feather.left / it->dst.w : 0.0f;
+				rs.feather[1] = it->dst.w > 0 ? (float)it->feather.right / it->dst.w : 0.0f;
+				rs.feather[2] = it->dst.h > 0 ? (float)it->feather.top / it->dst.h : 0.0f;
+				rs.feather[3] = it->dst.h > 0 ? (float)it->feather.bottom / it->dst.h : 0.0f;
+				rs.gamma = (float)it->feather.gamma;
+			}
+			rd.slices.push_back(std::move(rs));
 		}
 		st->displays[d.id.toStdString()] = std::move(rd);
 	}

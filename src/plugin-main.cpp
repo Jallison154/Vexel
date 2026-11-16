@@ -374,6 +374,110 @@ VENDOR_REQ(SetDelay)
 	});
 }
 
+static QString resolveSlice(obs_data_t *req)
+{
+	QString slice = QString::fromUtf8(obs_data_get_string(req, "sliceId"));
+	if (!slice.isEmpty() && Controller::instance()->doc().slice(slice))
+		return slice;
+	const QString sliceName = QString::fromUtf8(obs_data_get_string(req, "sliceName"));
+	for (const auto &d : Controller::instance()->doc().displays)
+		for (const auto &s : d.slices)
+			if (s.name == sliceName)
+				return s.id;
+	return QString();
+}
+
+VENDOR_REQ(SetSliceWarp)
+{
+	/* {sliceName|sliceId, cols, rows[, points: [{x, y}] relative to the
+	 * output rect]}; cols/rows 0 = warp off. Without points the current
+	 * shape is kept on the new grid. */
+	runBlocking([&]() {
+		const QString id = resolveSlice(req);
+		if (id.isEmpty())
+			return setError(res, "unknown slice");
+		Controller *c = Controller::instance();
+		if (c->isSliceLocked(id))
+			return setError(res, "slice is locked");
+		const int cols = (int)obs_data_get_int(req, "cols"), rows = (int)obs_data_get_int(req, "rows");
+		obs_data_array_t *arr = obs_data_get_array(req, "points");
+		if (arr && cols >= 2 && rows >= 2) {
+			Warp w;
+			w.cols = cols;
+			w.rows = rows;
+			for (size_t i = 0; i < obs_data_array_count(arr); i++) {
+				obs_data_t *p = obs_data_array_item(arr, i);
+				w.pts.push_back({obs_data_get_double(p, "x"), obs_data_get_double(p, "y")});
+				obs_data_release(p);
+			}
+			obs_data_array_release(arr);
+			if (!w.active())
+				return setError(res, "points must have cols x rows entries (2..9 each)");
+			c->setSliceWarp(id, w);
+		} else {
+			obs_data_array_release(arr);
+			c->setSliceWarpGrid(id, cols, rows);
+		}
+		setStateJson(res);
+	});
+}
+
+VENDOR_REQ(SetWarpPoint)
+{
+	/* {sliceName|sliceId, index, x, y} in output pixels; or {dx, dy} to nudge. */
+	runBlocking([&]() {
+		const QString id = resolveSlice(req);
+		if (id.isEmpty())
+			return setError(res, "unknown slice");
+		Controller *c = Controller::instance();
+		const Slice *s = c->doc().slice(id);
+		const int index = (int)obs_data_get_int(req, "index");
+		if (!s || index < 0 || index >= s->warp.count())
+			return setError(res, "no such warp point");
+		if (c->isSliceLocked(id))
+			return setError(res, "slice is locked");
+		if (obs_data_has_user_value(req, "dx") || obs_data_has_user_value(req, "dy"))
+			c->nudgeWarpPoint(id, index, obs_data_get_double(req, "dx"), obs_data_get_double(req, "dy"));
+		else
+			c->setWarpPoint(id, index, {obs_data_get_double(req, "x"), obs_data_get_double(req, "y")});
+		setStateJson(res);
+	});
+}
+
+VENDOR_REQ(SelectWarpPoint)
+{
+	runBlocking([&]() {
+		const QString id = resolveSlice(req);
+		Controller *c = Controller::instance();
+		if (!id.isEmpty())
+			c->selectSlice(id);
+		c->selectWarpPoint((int)obs_data_get_int(req, "index"));
+		obs_data_set_int(res, "selectedPoint", c->selectedWarpPoint());
+		setStateJson(res);
+	});
+}
+
+VENDOR_REQ(SetSliceFeather)
+{
+	/* {sliceName|sliceId, left, right, top, bottom (output px), gamma} */
+	runBlocking([&]() {
+		const QString id = resolveSlice(req);
+		if (id.isEmpty())
+			return setError(res, "unknown slice");
+		Feather f;
+		f.left = std::clamp((int)obs_data_get_int(req, "left"), 0, 8192);
+		f.right = std::clamp((int)obs_data_get_int(req, "right"), 0, 8192);
+		f.top = std::clamp((int)obs_data_get_int(req, "top"), 0, 8192);
+		f.bottom = std::clamp((int)obs_data_get_int(req, "bottom"), 0, 8192);
+		const double g = obs_data_has_user_value(req, "gamma") ? obs_data_get_double(req, "gamma") : 1.0;
+		f.gamma = std::clamp(g, 0.2, 5.0);
+		if (Controller::instance()->isSliceLocked(id))
+			return setError(res, "slice is locked");
+		Controller::instance()->setSliceFeather(id, f);
+		setStateJson(res);
+	});
+}
+
 VENDOR_REQ(SetSliceLocked)
 {
 	runBlocking([&]() {
@@ -667,6 +771,10 @@ static void registerVendor()
 	REG(Select);
 	REG(SetDelay);
 	REG(SetSliceLocked);
+	REG(SetSliceWarp);
+	REG(SetWarpPoint);
+	REG(SelectWarpPoint);
+	REG(SetSliceFeather);
 	REG(SetIdentify);
 	REG(ListPresets);
 	REG(SavePreset);

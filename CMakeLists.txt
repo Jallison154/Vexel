@@ -48,6 +48,7 @@ target_sources(
     src/controller.hpp
     src/core/geometry.hpp
     src/core/display-match.hpp
+    src/core/warp.hpp
     src/model/mapping.cpp
     src/model/mapping.hpp
     src/output/ndi-sender.cpp

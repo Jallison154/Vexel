@@ -19,6 +19,7 @@ the Free Software Foundation; either version 2 of the License, or
 #pragma once
 
 #include "core/geometry.hpp"
+#include "core/warp.hpp"
 #include "ui/obs-display-widget.hpp"
 
 #include <QImage>
@@ -95,6 +96,16 @@ private:
 		bool selected = false;
 		bool dim = false;
 		bool locked = false;
+		/* Projection mapping (Output Placement only): warped outline and
+		 * control points, in display pixels. */
+		bool warped = false;         /* outline differs from the rect */
+		std::vector<PointD> outline; /* closed polygon */
+		std::vector<PointD> points;  /* control points, row-major */
+		int cols = 0, rows = 0;
+		bool contains(double x, double y) const
+		{
+			return warped ? pointInPolygon(outline, x, y) : rect.contains(x, y);
+		}
 	};
 
 	struct OverlayItem {
@@ -103,6 +114,9 @@ private:
 		bool selected = false, hovered = false, dim = false, locked = false;
 		std::string labelKey;
 		QImage label;
+		bool warped = false;
+		std::vector<PointD> outline, points;
+		int cols = 0, rows = 0, selPoint = -1;
 	};
 
 	struct Overlay {
@@ -119,7 +133,7 @@ private:
 		QImage centerLabel;
 	};
 
-	enum class Drag { None, Pan, Create, Move, Resize };
+	enum class Drag { None, Pan, Create, Move, Resize, Point };
 
 	void canvasSize(int &w, int &h) const;
 	std::vector<Item> items() const;
@@ -145,6 +159,9 @@ private:
 	QPointF dragStartCanvas_, dragStartDevice_;
 	double dragStartPanX_ = 0, dragStartPanY_ = 0;
 	IRect dragStartRect_;
+	int dragPoint_ = -1;
+	PointD dragStartPoint_;
+	int hitPoint(const Item &it, const QPointF &canvas) const; /* control point under the cursor, or -1 */
 	Handle dragHandle_ = Handle::None;
 	QString dragSlice_;
 	IRect rubber_;

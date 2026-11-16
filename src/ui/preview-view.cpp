@@ -111,6 +111,15 @@ std::vector<PreviewView::Item> PreviewView::items() const
 		it.selected = s.id == selS;
 		it.dim = (kind_ == Kind::Input && d.id != selD) || !s.enabled;
 		it.locked = s.locked;
+		if (kind_ == Kind::Output && s.warp.active()) {
+			it.warped = !isIdentityWarp(s.warp);
+			it.cols = s.warp.cols;
+			it.rows = s.warp.rows;
+			for (const PointD &n : s.warp.pts)
+				it.points.push_back(warpToPixels(n, s.dst));
+			for (const PointD &n : warpOutline(s.warp, 48))
+				it.outline.push_back(warpToPixels(n, s.dst));
+		}
 		out.push_back(it);
 	};
 
@@ -304,6 +313,12 @@ void PreviewView::refresh()
 		oi.dim = it->dim;
 		oi.locked = it->locked;
 		oi.hovered = it->sliceId == hoverSlice_;
+		oi.warped = it->warped;
+		oi.outline = it->outline;
+		oi.points = it->points;
+		oi.cols = it->cols;
+		oi.rows = it->rows;
+		oi.selPoint = it->selected ? c->selectedWarpPoint() : -1;
 		QString text = QStringLiteral("%1%2  %3×%4")
 				       .arg(it->locked ? QStringLiteral("🔒 ") : QString())
 				       .arg(s->name)
@@ -431,15 +446,60 @@ void PreviewView::drawOverlay(const Overlay &ov, uint32_t cx, uint32_t cy)
 		gfx::strokeRect(x, y, w, h, 1.0f * d, kCanvasBorder);
 	}
 
+	auto scr = [&](const PointD &p) {
+		return PointD{p.x * ov.zoom + ov.panX, p.y * ov.zoom + ov.panY};
+	};
 	for (const OverlayItem &it : ov.items) {
 		float x, y, w, h;
 		toScreen(it.rect, x, y, w, h);
 		int strokeA = it.dim ? 175 : 255;
 		int fillA = it.selected ? 46 : (it.hovered ? 34 : (it.dim ? 0 : 18));
-		if (fillA)
-			gfx::fillRect(x, y, w, h, withAlpha(it.color, fillA));
 		float t = (it.selected ? 2.0f : (it.hovered ? 1.5f : 1.0f)) * d;
-		gfx::strokeRect(x, y, w, h, t, withAlpha(it.color, strokeA));
+		if (it.warped) {
+			/* Projection-mapped: the real (warped) outline instead of the rect. */
+			for (size_t i = 0; i < it.outline.size(); i++) {
+				const PointD a = scr(it.outline[i]), b = scr(it.outline[(i + 1) % it.outline.size()]);
+				gfx::drawLine((float)a.x, (float)a.y, (float)b.x, (float)b.y, t,
+					      withAlpha(it.color, strokeA));
+			}
+			if (it.selected) {
+				/* faint original rectangle, for reference */
+				gfx::strokeRect(x, y, w, h, 1.0f * d, withAlpha(it.color, 70));
+			}
+		} else {
+			if (fillA)
+				gfx::fillRect(x, y, w, h, withAlpha(it.color, fillA));
+			gfx::strokeRect(x, y, w, h, t, withAlpha(it.color, strokeA));
+		}
+		if (it.selected && !it.points.empty()) {
+			/* Mesh lines between control points, then the points. */
+			if (it.cols > 2 || it.rows > 2) {
+				for (int r = 0; r < it.rows; r++)
+					for (int cc = 0; cc < it.cols; cc++) {
+						const PointD a = scr(it.points[(size_t)(r * it.cols + cc)]);
+						if (cc + 1 < it.cols) {
+							const PointD b = scr(it.points[(size_t)(r * it.cols + cc + 1)]);
+							gfx::drawLine((float)a.x, (float)a.y, (float)b.x, (float)b.y,
+								      1.0f * d, withAlpha(it.color, 150));
+						}
+						if (r + 1 < it.rows) {
+							const PointD b =
+								scr(it.points[(size_t)((r + 1) * it.cols + cc)]);
+							gfx::drawLine((float)a.x, (float)a.y, (float)b.x, (float)b.y,
+								      1.0f * d, withAlpha(it.color, 150));
+						}
+					}
+			}
+			for (size_t i = 0; i < it.points.size(); i++) {
+				const PointD p = scr(it.points[i]);
+				const bool sel = (int)i == it.selPoint;
+				const float hs = (sel ? 12.0f : 9.0f) * d;
+				gfx::fillRect((float)p.x - hs / 2, (float)p.y - hs / 2, hs, hs,
+					      sel ? withAlpha(it.color, 255) : 0xFFFFFFFF);
+				gfx::strokeRect((float)p.x - hs / 2, (float)p.y - hs / 2, hs, hs,
+						(sel ? 2.0f : 1.0f) * d, sel ? 0xFFFFFFFF : withAlpha(it.color, 255));
+			}
+		}
 
 		gs_texture_t *tex = label(it.labelKey, it.label);
 		if (tex && !it.dim) {
@@ -450,7 +510,7 @@ void PreviewView::drawOverlay(const Overlay &ov, uint32_t cx, uint32_t cy)
 			gfx::drawTexture(tex, std::floor(lx), std::floor(ly), lw, lh);
 		}
 
-		if (it.selected && !it.locked) {
+		if (it.selected && !it.locked && it.points.empty()) {
 			float hs = 7.0f * d;
 			for (Handle hd : kResizeHandles) {
 				PointD p = handlePos(it.rect, hd);
@@ -520,6 +580,23 @@ static Qt::CursorShape cursorFor(Handle h)
 	}
 }
 
+int PreviewView::hitPoint(const Item &it, const QPointF &p) const
+{
+	if (kind_ != Kind::Output || !it.selected || it.locked || it.points.empty())
+		return -1;
+	const double tol = 9.0 * devicePixelRatioF() / zoom_;
+	int best = -1;
+	double bestD = tol * tol;
+	for (size_t i = 0; i < it.points.size(); i++) {
+		const double dx = it.points[i].x - p.x(), dy = it.points[i].y - p.y();
+		if (dx * dx + dy * dy <= bestD) {
+			bestD = dx * dx + dy * dy;
+			best = (int)i;
+		}
+	}
+	return best;
+}
+
 void PreviewView::updateHover(const QPointF &p)
 {
 	Controller *c = Controller::instance();
@@ -528,9 +605,19 @@ void PreviewView::updateHover(const QPointF &p)
 	Handle h = Handle::None;
 	bool overLocked = false;
 	for (const Item &it : items()) {
-		Handle hh = (it.selected && !it.locked)
+		if (hitPoint(it, p) >= 0) {
+			hover = it.sliceId;
+			h = Handle::None;
+			setCursor(Qt::CrossCursor);
+			if (hover != hoverSlice_) {
+				hoverSlice_ = hover;
+				refresh();
+			}
+			return;
+		}
+		Handle hh = (it.selected && !it.locked && it.points.empty())
 				    ? hitTest(it.rect, p.x(), p.y(), tol)
-				    : (it.rect.contains(p.x(), p.y()) ? Handle::Move : Handle::None);
+				    : (it.contains(p.x(), p.y()) ? Handle::Move : Handle::None);
 		if (hh != Handle::None) {
 			hover = it.sliceId;
 			h = hh;
@@ -573,8 +660,18 @@ void PreviewView::mousePressEvent(QMouseEvent *e)
 
 	double tol = 6.0 * devicePixelRatioF() / zoom_;
 	for (const Item &it : items()) {
-		Handle h = (it.selected && !it.locked) ? hitTest(it.rect, p.x(), p.y(), tol)
-						       : (it.rect.contains(p.x(), p.y()) ? Handle::Move : Handle::None);
+		/* A warp point of the selected slice wins over everything. */
+		if (const int pi = hitPoint(it, p); pi >= 0) {
+			c->selectWarpPoint(pi);
+			drag_ = Drag::Point;
+			dragSlice_ = it.sliceId;
+			dragPoint_ = pi;
+			dragStartPoint_ = it.points[(size_t)pi];
+			return;
+		}
+		Handle h = (it.selected && !it.locked && it.points.empty())
+				   ? hitTest(it.rect, p.x(), p.y(), tol)
+				   : (it.contains(p.x(), p.y()) ? Handle::Move : Handle::None);
 		if (h == Handle::None)
 			continue;
 		if (!it.selected)
@@ -655,6 +752,14 @@ void PreviewView::mouseMoveEvent(QMouseEvent *e)
 		refresh();
 		return;
 	}
+	case Drag::Point: {
+		/* Tenth-of-a-pixel precision; arrow keys then step whole pixels. */
+		const double nx = std::round((dragStartPoint_.x + p.x() - dragStartCanvas_.x()) * 10.0) / 10.0;
+		const double ny = std::round((dragStartPoint_.y + p.y() - dragStartCanvas_.y()) * 10.0) / 10.0;
+		Controller::instance()->setWarpPoint(dragSlice_, dragPoint_, {nx, ny});
+		refresh();
+		return;
+	}
 	case Drag::Move:
 	case Drag::Resize: {
 		double dx = p.x() - dragStartCanvas_.x(), dy = p.y() - dragStartCanvas_.y();
@@ -699,7 +804,7 @@ void PreviewView::mouseDoubleClickEvent(QMouseEvent *e)
 {
 	const QPointF p = eventCanvasPos(e->position());
 	for (const Item &it : items())
-		if (it.rect.contains(p.x(), p.y()))
+		if (it.contains(p.x(), p.y()))
 			return;
 	fitToView();
 }
@@ -727,7 +832,15 @@ bool PreviewView::event(QEvent *e)
 		auto *k = static_cast<QKeyEvent *>(e);
 		if (k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab) {
 			const bool back = k->key() == Qt::Key_Backtab || (k->modifiers() & Qt::ShiftModifier);
-			Controller::instance()->cycleSlice(back ? -1 : 1);
+			Controller *c = Controller::instance();
+			const Slice *s = c->doc().slice(c->selectedSlice());
+			if (kind_ == Kind::Output && s && s->warp.active() && !s->locked) {
+				/* Projection mapping: Tab steps through the warp points. */
+				const int n = s->warp.count(), cur = c->selectedWarpPoint();
+				c->selectWarpPoint(cur < 0 ? (back ? n - 1 : 0) : (cur + (back ? n - 1 : 1)) % n);
+				return true;
+			}
+			c->cycleSlice(back ? -1 : 1);
 			return true;
 		}
 	}
@@ -753,6 +866,11 @@ void PreviewView::nudge(int dx, int dy)
 		return;
 	if (c->isSliceLocked(id)) {
 		emit blockedByLock(id);
+		return;
+	}
+	if (kind_ == Kind::Output && c->selectedWarpPoint() >= 0) {
+		/* A selected warp point moves on its own. */
+		c->nudgeWarpPoint(id, c->selectedWarpPoint(), dx, dy);
 		return;
 	}
 	IRect r = sliceRect(id);
@@ -798,9 +916,14 @@ void PreviewView::keyPressEvent(QKeyEvent *e)
 		return;
 	case Qt::Key_Escape:
 		if (drag_ == Drag::None && rubber_.empty()) {
-			c->select(c->selectedDisplay(), QString()); /* deselect */
+			if (c->selectedWarpPoint() >= 0)
+				c->selectWarpPoint(-1); /* first Esc: let go of the point */
+			else
+				c->select(c->selectedDisplay(), QString()); /* deselect */
 			return;
 		}
+		if (drag_ == Drag::Point)
+			c->setWarpPoint(dragSlice_, dragPoint_, dragStartPoint_);
 		if (drag_ == Drag::Move || drag_ == Drag::Resize)
 			applyRect(dragSlice_, dragStartRect_);
 		drag_ = Drag::None;

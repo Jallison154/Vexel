@@ -12,7 +12,10 @@ the Free Software Foundation; either version 2 of the License, or
 #include "output/ndi-sender.hpp"
 
 #include <obs.h>
+#include <obs-module.h>
 #include <graphics/matrix4.h>
+#include <graphics/vec2.h>
+#include <graphics/vec3.h>
 #include <graphics/vec4.h>
 
 #include <algorithm>
@@ -22,6 +25,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <deque>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <future>
 
@@ -119,6 +123,105 @@ static void destroyThumb(ThumbSlot &t)
 
 static void thumbTick(const RenderState &st);
 
+/* Projection mapping: warp shader and per-slice meshes (graphics thread). */
+static gs_effect_t *g_warpEffect = nullptr;
+struct SliceMesh {
+	std::shared_ptr<const std::vector<float>> tris; /* source of the current buffer */
+	gs_vertbuffer_t *vb = nullptr;
+	uint32_t count = 0;
+};
+static std::unordered_map<std::string, SliceMesh> g_meshes;     /* by slice id */
+static std::unordered_map<std::string, IdentifyTex> g_patterns; /* warped slice test patterns */
+
+static gs_vertbuffer_t *meshFor(const RenderSlice &s, uint32_t &count)
+{
+	count = 0;
+	if (!s.tris || s.tris->size() < 24)
+		return nullptr;
+	SliceMesh &m = g_meshes[s.id];
+	if (m.tris != s.tris) {
+		gs_vertexbuffer_destroy(m.vb);
+		m.vb = nullptr;
+		m.tris = s.tris;
+		const size_t n = s.tris->size() / 4;
+		gs_vb_data *vd = gs_vbdata_create();
+		vd->num = n;
+		vd->points = static_cast<vec3 *>(bmalloc(sizeof(vec3) * n));
+		vd->num_tex = 1;
+		vd->tvarray = static_cast<gs_tvertarray *>(bzalloc(sizeof(gs_tvertarray)));
+		vd->tvarray[0].width = 2;
+		vd->tvarray[0].array = bmalloc(sizeof(vec2) * n);
+		auto *uv = static_cast<vec2 *>(vd->tvarray[0].array);
+		const float *f = s.tris->data();
+		for (size_t i = 0; i < n; i++) {
+			vec3_set(&vd->points[i], f[i * 4], f[i * 4 + 1], 0.0f);
+			vec2_set(&uv[i], f[i * 4 + 2], f[i * 4 + 3]);
+		}
+		m.vb = gs_vertexbuffer_create(vd, 0); /* takes ownership of vd */
+		m.count = m.vb ? (uint32_t)n : 0;
+	}
+	count = m.count;
+	return m.vb;
+}
+
+/* Draw `tex` (region src_rect, texture coordinates) through the slice's
+ * warp with its soft edges. Current projection maps display pixels. */
+static void drawMapped(gs_texture_t *tex, bool srgb, const RenderSlice &s, float sx, float sy, float sw, float sh,
+		       float multiplier)
+{
+	uint32_t count = 0;
+	gs_vertbuffer_t *vb = meshFor(s, count);
+	if (!tex || !vb || !g_warpEffect)
+		return;
+	gs_effect_t *e = g_warpEffect;
+	gs_eparam_t *image = gs_effect_get_param_by_name(e, "image");
+	if (srgb)
+		gs_effect_set_texture_srgb(image, tex);
+	else
+		gs_effect_set_texture(image, tex);
+	vec4 v;
+	vec4_set(&v, sx, sy, sw, sh);
+	gs_effect_set_vec4(gs_effect_get_param_by_name(e, "src_rect"), &v);
+	vec4_set(&v, s.feather[0], s.feather[1], s.feather[2], s.feather[3]);
+	gs_effect_set_vec4(gs_effect_get_param_by_name(e, "feather"), &v);
+	gs_effect_set_float(gs_effect_get_param_by_name(e, "blend_gamma"), s.gamma);
+	gs_effect_set_float(gs_effect_get_param_by_name(e, "multiplier"), multiplier);
+	gs_load_vertexbuffer(vb);
+	gs_load_indexbuffer(nullptr);
+	while (gs_effect_loop(e, "Draw"))
+		gs_draw(GS_TRIS, 0, count);
+	gs_load_vertexbuffer(nullptr);
+}
+
+/* Test patterns of warped slices, drawn through their warp over the
+ * display's pattern image (which leaves their area to them). */
+static void drawMappedPatterns(const RenderDisplay &rd)
+{
+	bool any = false;
+	for (const RenderSlice &s : rd.slices)
+		any = any || (s.mapped && s.pattern && !s.pattern->isNull());
+	if (!any)
+		return;
+	const bool prevSrgb = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(false); /* pattern colours exactly as drawn */
+	gs_blend_state_push();
+	gs_enable_blending(false);
+	for (const RenderSlice &s : rd.slices) {
+		if (!s.mapped || !s.pattern || s.pattern->isNull())
+			continue;
+		IdentifyTex &t = g_patterns[s.id];
+		const qint64 key = s.pattern->cacheKey();
+		if (!t.tex || t.key != key) {
+			gs_texture_destroy(t.tex);
+			t.tex = createTextureFromImage(*s.pattern);
+			t.key = key;
+		}
+		drawMapped(t.tex, false, s, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f);
+	}
+	gs_blend_state_pop();
+	gs_enable_framebuffer_srgb(prevSrgb);
+}
+
 /* NDI displays: full-resolution render targets with a 3-stage readback
  * ring each (graphics thread), targets shared with the UI (mutex). */
 struct NdiSlot {
@@ -160,6 +263,17 @@ void init()
 
 	obs_add_main_rendered_callback(delayTick, nullptr);
 
+	if (char *path = obs_module_file("effects/vexel-warp.effect")) {
+		char *err = nullptr;
+		g_warpEffect = gs_effect_create_from_file(path, &err);
+		if (!g_warpEffect)
+			blog(LOG_ERROR, "[output-mapping] warp shader failed to load: %s", err ? err : "unknown error");
+		bfree(err);
+		bfree(path);
+	} else {
+		blog(LOG_ERROR, "[output-mapping] warp shader not found (data/effects/vexel-warp.effect)");
+	}
+
 	gs_render_start(true);
 	gs_vertex2f(0.0f, 0.0f);
 	gs_vertex2f(1.0f, 0.0f);
@@ -184,11 +298,16 @@ void shutdown()
 	for (auto &kv : g_delays)
 		destroyLine(kv.second);
 	g_delays.clear();
-	for (auto *m : {&g_identify, &g_identifyPreview}) {
+	for (auto *m : {&g_identify, &g_identifyPreview, &g_patterns}) {
 		for (auto &kv : *m)
 			gs_texture_destroy(kv.second.tex);
 		m->clear();
 	}
+	for (auto &kv : g_meshes)
+		gs_vertexbuffer_destroy(kv.second.vb);
+	g_meshes.clear();
+	gs_effect_destroy(g_warpEffect);
+	g_warpEffect = nullptr;
 	gs_samplerstate_destroy(g_point);
 	gs_samplerstate_destroy(g_linear);
 	gs_vertexbuffer_destroy(g_quad);
@@ -277,6 +396,12 @@ void drawSlices(const ProgramFrame &pf, const RenderDisplay &rd)
 	gs_enable_blending(false); /* opaque: upper slices replace lower ones */
 
 	for (const RenderSlice &s : rd.slices) {
+		if (s.mapped) {
+			/* Warped / soft-edged: through the mesh; crop past the canvas is black. */
+			drawMapped(pf.tex, true, s, (float)s.src.x / pf.width, (float)s.src.y / pf.height,
+				   (float)s.src.w / pf.width, (float)s.src.h / pf.height, pf.multiplier);
+			continue;
+		}
 		ClippedSlice c;
 		if (!clipSliceToCanvas(s.src, s.dst, (int)pf.width, (int)pf.height, c))
 			continue;
@@ -304,6 +429,7 @@ void drawDisplayLive(const ProgramFrame &pf, const RenderDisplay &rd)
 	if (rd.identify == 1 && rd.identifyPreviewImage && !rd.identifyPreviewImage->isNull()) {
 		if (gs_texture_t *tex = identifyTexture(rd, true))
 			drawTexture(tex, 0.0f, 0.0f, (float)rd.width, (float)rd.height);
+		drawMappedPatterns(rd);
 		return;
 	}
 	drawSlices(pf, rd);
@@ -341,6 +467,8 @@ void renderDisplay(const RenderDisplay &rd, uint32_t cx, uint32_t cy, bool fit)
 		}
 		if (gs_texture_t *tex = identifyTexture(rd))
 			drawTexture(tex, 0.0f, 0.0f, (float)rd.width, (float)rd.height);
+		if (rd.identify == 1)
+			drawMappedPatterns(rd);
 	} else if (line != g_delays.end() && line->second.show) {
 		/* Delayed (or fading) output: draw the buffered frame(s). A fade is
 		 * old*(1-mix) + new*mix, summed in linear light. */
@@ -412,6 +540,34 @@ static void delayTick(void *)
 			it = g_delays.erase(it);
 		} else {
 			++it;
+		}
+	}
+
+	/* Free meshes / warped patterns of slices that are gone or unwarped. */
+	{
+		std::unordered_set<std::string> mapped, patterned;
+		for (const auto &kv : st->displays)
+			for (const RenderSlice &s : kv.second.slices)
+				if (s.mapped) {
+					mapped.insert(s.id);
+					if (s.pattern && kv.second.identify == 1)
+						patterned.insert(s.id);
+				}
+		for (auto it = g_meshes.begin(); it != g_meshes.end();) {
+			if (!mapped.count(it->first)) {
+				gs_vertexbuffer_destroy(it->second.vb);
+				it = g_meshes.erase(it);
+			} else {
+				++it;
+			}
+		}
+		for (auto it = g_patterns.begin(); it != g_patterns.end();) {
+			if (!patterned.count(it->first)) {
+				gs_texture_destroy(it->second.tex);
+				it = g_patterns.erase(it);
+			} else {
+				++it;
+			}
 		}
 	}
 
@@ -587,11 +743,37 @@ void strokeRect(float x, float y, float w, float h, float t, uint32_t argb)
 
 void drawLine(float x0, float y0, float x1, float y1, float t, uint32_t argb)
 {
-	/* Only axis-aligned guides are needed. */
-	if (std::fabs(x1 - x0) >= std::fabs(y1 - y0))
-		fillRect(std::min(x0, x1), y0 - t / 2, std::fabs(x1 - x0), t, argb);
-	else
-		fillRect(x0 - t / 2, std::min(y0, y1), t, std::fabs(y1 - y0), argb);
+	/* Axis-aligned guides: an exact rectangle (crisp, pixel-aligned). */
+	if (y0 == y1 || x0 == x1) {
+		if (std::fabs(x1 - x0) >= std::fabs(y1 - y0))
+			fillRect(std::min(x0, x1), y0 - t / 2, std::fabs(x1 - x0), t, argb);
+		else
+			fillRect(x0 - t / 2, std::min(y0, y1), t, std::fabs(y1 - y0), argb);
+		return;
+	}
+	/* Any other angle (warped outlines, mesh lines): a rotated thin quad. */
+	const float dx = x1 - x0, dy = y1 - y0, len = std::sqrt(dx * dx + dy * dy);
+	if (len <= 0.0f || !g_quad)
+		return;
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	const bool prevSrgb = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(false);
+	gs_blend_state_push();
+	gs_enable_blending(true);
+	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
+	setColor(solid, argb);
+	gs_matrix_push();
+	gs_matrix_translate3f(x0, y0, 0.0f);
+	gs_matrix_rotaa4f(0.0f, 0.0f, 1.0f, std::atan2(dy, dx));
+	gs_matrix_translate3f(0.0f, -t / 2, 0.0f);
+	gs_matrix_scale3f(len, t, 1.0f);
+	gs_load_vertexbuffer(g_quad);
+	gs_load_indexbuffer(nullptr);
+	while (gs_effect_loop(solid, "Solid"))
+		gs_draw(GS_TRISTRIP, 0, 0);
+	gs_matrix_pop();
+	gs_blend_state_pop();
+	gs_enable_framebuffer_srgb(prevSrgb);
 }
 
 void drawTexture(gs_texture_t *tex, float x, float y, float w, float h)
