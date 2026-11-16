@@ -1675,7 +1675,8 @@ void MappingEditor::showAbout()
 			    .arg(QString::fromUtf8(PLUGIN_VERSION)));
 	box.setInformativeText(QStringLiteral(
 		"Released under the GNU General Public License v2.0 or later.<br>"
-		"<a href='https://github.com/Jallison154/obs-output-mapping'>github.com/Jallison154/obs-output-mapping</a>"));
+		"<a href='https://github.com/Jallison154/obs-output-mapping'>github.com/Jallison154/obs-output-mapping</a>"
+		"<br><a href='https://buymeacoffee.com/okamidesigns'>☕ Buy me a coffee</a>"));
 	box.setTextInteractionFlags(Qt::TextBrowserInteraction);
 	box.setStandardButtons(QMessageBox::Ok);
 	box.exec();
