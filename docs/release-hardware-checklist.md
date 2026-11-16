@@ -19,7 +19,7 @@ was checked. Fuller plans: [windows-test-plan.md](windows-test-plan.md) and
 
 If anything fails, save the log (*Help ▸ Log Files ▸ Upload Current Log
 File*) and open an issue:
-https://github.com/Jallison154/obs-output-mapping/issues
+https://github.com/Jallison154/Vexel/issues
 
 ## Results still to record
 

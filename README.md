@@ -17,10 +17,10 @@ display** (Output Placement), including corner pin, mesh warp and soft
 edges for projection mapping. Every mapped output follows Program live,
 including transitions, and runs independently of streaming and recording.
 
-**[Download](https://github.com/Jallison154/obs-output-mapping/releases)** ·
+**[Download](https://github.com/Jallison154/Vexel/releases)** ·
 **[Install on Windows](#install-on-windows)** ·
 **[Install on macOS](#install-on-macos)** ·
-**[Report a problem](https://github.com/Jallison154/obs-output-mapping/issues)** ·
+**[Report a problem](https://github.com/Jallison154/Vexel/issues)** ·
 **[What's been tested](VERIFICATION.md)**
 
 ![Vexel editor: Input Selection (Program canvas, top) and Output Placement (one display, bottom)](docs/images/editor.png)
@@ -53,7 +53,7 @@ needs real hardware: [VERIFICATION.md](VERIFICATION.md).
 
 **Which version has what:** projection mapping (corner pin, mesh warp,
 soft edges) needs **0.8.0 or later**; NDI outputs need **0.7.0 or later**.
-The release notes on [Releases](https://github.com/Jallison154/obs-output-mapping/releases) list
+The release notes on [Releases](https://github.com/Jallison154/Vexel/releases) list
 what's new in each version.
 
 ## Features
@@ -309,7 +309,7 @@ No build needed. Requires Windows 10 (version 2004 or later) or 11, 64-bit,
 and OBS Studio 33.
 
 1. Quit OBS.
-2. Go to [**Releases**](https://github.com/Jallison154/obs-output-mapping/releases) and download
+2. Go to [**Releases**](https://github.com/Jallison154/Vexel/releases) and download
    **`output-mapping-<version>-windows-x64.zip`** from the newest release
    (under *Assets*).
 3. Right-click the zip ▸ **Extract All…**. You get a folder named `output-mapping`.
@@ -330,7 +330,7 @@ No build needed. Requires macOS 13 or later and OBS Studio 33. The installer is 
 (Apple Silicon and Intel).
 
 1. Quit OBS.
-2. From [**Releases**](https://github.com/Jallison154/obs-output-mapping/releases),
+2. From [**Releases**](https://github.com/Jallison154/Vexel/releases),
    download **`output-mapping-<version>-macos-universal.pkg`**.
 3. Double-click it. Because the installer isn't signed with an Apple
    Developer ID yet, macOS first says it can't be opened: click **Done**,
@@ -349,7 +349,7 @@ For NDI outputs, also install [NDI Tools](https://ndi.video/tools/)
 
 ## Support
 
-Found a bug or have a question? [Open an issue on GitHub](https://github.com/Jallison154/obs-output-mapping/issues).
+Found a bug or have a question? [Open an issue on GitHub](https://github.com/Jallison154/Vexel/issues).
 Please include your Vexel version (*Options ▸ About Vexel*), your OS, and
 the OBS log of the session (*Help ▸ Log Files ▸ Upload Current Log File*
 in OBS).
@@ -369,8 +369,8 @@ development with C++*, Windows SDK 10.0.20348 or newer, CMake 3.28+,
 Git.
 
 ```powershell
-git clone https://github.com/Jallison154/obs-output-mapping.git
-cd obs-output-mapping
+git clone https://github.com/Jallison154/Vexel.git
+cd Vexel
 cmake --preset windows-x64
 cmake --build --preset windows-x64 --config RelWithDebInfo
 cmake --install build_x64 --prefix release --config RelWithDebInfo
@@ -547,6 +547,10 @@ folder (`output-mapping`), the download file names
 the obs-websocket vendor name (`output-mapping`) are unchanged, so
 updating works exactly as before (replace the `output-mapping` folder, or
 run the new `.pkg`) and nothing needs to be set up again.
+
+The GitHub repository was also renamed, from `obs-output-mapping` to
+`Vexel`. Old links (including release downloads) redirect to the new
+address.
 
 ## License
 
