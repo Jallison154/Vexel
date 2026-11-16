@@ -91,6 +91,7 @@ private:
 	void showTreeMenu(const QPoint &pos);
 	void populateAddDisplayMenu(QMenu *m);
 	void addVirtualDisplay();
+	void addNdiDisplay();
 	void addSliceToSelected();
 	void startFullscreenSelected();
 	void toggleWindowSelected();

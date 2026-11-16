@@ -21,13 +21,17 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QElapsedTimer>
 #include <QTimer>
 
+#include <memory>
 #include <vector>
 
 namespace om {
 
 class OutputWindow;
+namespace ndi {
+class Sender;
+}
 
-enum class OutputMode { None, Fullscreen, Window };
+enum class OutputMode { None, Fullscreen, Window, Ndi };
 
 struct DisplayStatus {
 	MatchStatus match = MatchStatus::Unassigned;
@@ -76,10 +80,11 @@ public:
 	/* -- display mutations -- */
 	QString addPhysicalDisplay(int screenIndex);
 	QString addVirtualDisplay(const QString &name, int w, int h);
+	QString addNdiDisplay(const QString &name, int w, int h);
 	void removeDisplay(const QString &id);
 	void renameDisplay(const QString &id, const QString &name);
-	void assignScreen(const QString &displayId, int screenIndex); /* -1 = make virtual */
-	void setVirtualSize(const QString &id, int w, int h);
+	void assignScreen(const QString &displayId, int screenIndex); /* -1 = make virtual, -2 = NDI */
+	void setVirtualSize(const QString &id, int w, int h);         /* virtual and NDI displays */
 	void setDisplayDelay(const QString &id, int delayMs);
 	void moveDisplay(const QString &id, int newIndex);
 
@@ -140,11 +145,15 @@ public:
 	/* -- outputs -- */
 	bool startFullscreen(const QString &displayId, QString *error = nullptr);
 	bool openWindow(const QString &displayId, QString *error = nullptr);
+	bool startNdi(const QString &displayId, QString *error = nullptr);
+	/* NDI receivers connected to a running NDI display (-1 when not sending). */
+	int ndiConnections(const QString &displayId) const;
+	QString ndiError() const { return ndiError_; } /* last runtime problem, if any */
 	void stopOutput(const QString &displayId, bool userInitiated = true);
 	void stopAll();
 	void startAll();
 	OutputMode outputMode(const QString &displayId) const;
-	int activeOutputCount() const { return (int)outputs_.size(); }
+	int activeOutputCount() const { return (int)(outputs_.size() + ndi_.size()); }
 	/* Output health: frames rendered per second by the output window
 	 * (-1 when not running); `stalled` after 3 s at 0 fps. */
 	int outputFps(const QString &displayId) const { return outputFps_.value(displayId, -1); }
@@ -198,6 +207,9 @@ private:
 	std::vector<ScreenInfo> screens_;
 	QHash<QString, DisplayStatus> statuses_;
 	QHash<QString, QPointer<OutputWindow>> outputs_;
+	QHash<QString, std::shared_ptr<ndi::Sender>> ndi_; /* running NDI displays */
+	QString ndiError_;
+	void publishNdiTargets();
 	QTimer saveTimer_, programTimer_, screenTimer_, watchdog_;
 	bool displayCheckQueued_ = false;
 	std::vector<QPointer<OutputWindow>> retiring_; /* stopped, deletion deferred */

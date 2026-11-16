@@ -13,6 +13,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include "render/compositor.hpp"
 #include "render/identify-image.hpp"
 #include "ui/output-window.hpp"
+#include "output/ndi-sender.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -34,6 +35,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
+#include <QThread>
 #include <QScreen>
 
 namespace om {
@@ -140,6 +142,8 @@ void Controller::shutdown()
 		}
 	}
 	outputs_.clear();
+	ndi_.clear(); /* the graphics thread drops its references on gfx::shutdown */
+	gfx::setNdiTargets({});
 	/* Stopped outputs still waiting for deferred deletion: delete now,
 	 * while this plugin's code is still loaded. */
 	for (auto &w : retiring_)
@@ -236,6 +240,17 @@ void Controller::recomputeStatuses()
 		if (d.kind == DisplayKind::Virtual) {
 			st.match = MatchStatus::Unassigned;
 			st.text = QStringLiteral("Virtual · window only");
+			statuses_.insert(d.id, st);
+			continue;
+		}
+		if (d.kind == DisplayKind::Ndi) {
+			st.match = MatchStatus::Unassigned;
+			st.text = !ndiError_.isEmpty() && !ndi::runtimeAvailable()
+					  ? ndiError_
+					  : QStringLiteral("NDI source “%1” · %2×%3")
+						    .arg(d.name)
+						    .arg(d.width)
+						    .arg(d.height);
 			statuses_.insert(d.id, st);
 			continue;
 		}
@@ -373,6 +388,31 @@ QString Controller::addVirtualDisplay(const QString &name, int w, int h)
 	return d.id;
 }
 
+QString Controller::addNdiDisplay(const QString &name, int w, int h)
+{
+	DisplayMapping d;
+	d.id = newId();
+	QString base = name.trimmed().isEmpty() ? QStringLiteral("Vexel NDI") : name.trimmed();
+	/* NDI source names must be unique on this machine. */
+	QString n = base;
+	for (int i = 2;; i++) {
+		bool taken = false;
+		for (const auto &o : doc_.displays)
+			taken = taken || (o.kind == DisplayKind::Ndi && o.name == n);
+		if (!taken)
+			break;
+		n = QStringLiteral("%1 %2").arg(base).arg(i);
+	}
+	d.name = n;
+	d.kind = DisplayKind::Ndi;
+	d.width = std::clamp(w, 16, 7680);
+	d.height = std::clamp(h, 16, 4320);
+	doc_.displays.push_back(d);
+	changed(Change::Structure);
+	select(d.id, QString());
+	return d.id;
+}
+
 void Controller::removeDisplay(const QString &id)
 {
 	int i = doc_.displayIndex(id);
@@ -394,6 +434,11 @@ void Controller::renameDisplay(const QString &id, const QString &name)
 		if (outputs_.value(id))
 			outputs_.value(id)->setWindowTitle(QStringLiteral("Vexel – %1").arg(d->name));
 		changed(Change::Structure);
+		/* The NDI source name is fixed when it is created: re-announce it. */
+		if (ndi_.contains(id)) {
+			stopOutput(id, false);
+			startNdi(id);
+		}
 	}
 }
 
@@ -403,9 +448,13 @@ void Controller::assignScreen(const QString &displayId, int screenIndex)
 	if (!d)
 		return;
 	/* Changing the physical target always stops a running fullscreen. */
-	if (outputMode(displayId) == OutputMode::Fullscreen)
+	if (outputMode(displayId) == OutputMode::Fullscreen || outputMode(displayId) == OutputMode::Ndi)
 		stopOutput(displayId, false);
-	if (screenIndex < 0) {
+	if (screenIndex == -2) {
+		d->kind = DisplayKind::Ndi; /* keeps its current resolution */
+		d->identity = DisplayIdentity{};
+		d->outputWanted = false;
+	} else if (screenIndex < 0) {
 		d->kind = DisplayKind::Virtual;
 		d->identity = DisplayIdentity{};
 		d->outputWanted = false;
@@ -425,10 +474,10 @@ void Controller::assignScreen(const QString &displayId, int screenIndex)
 void Controller::setVirtualSize(const QString &id, int w, int h)
 {
 	DisplayMapping *d = doc_.display(id);
-	if (!d || d->kind != DisplayKind::Virtual)
+	if (!d || !hasFixedSize(d->kind))
 		return;
-	w = std::max(16, w);
-	h = std::max(16, h);
+	w = std::clamp(w, 16, 7680);
+	h = std::clamp(h, 16, 4320);
 	if (d->width == w && d->height == h)
 		return;
 	d->width = w;
@@ -898,7 +947,7 @@ bool Controller::applyLayout(const MappingDocument &incoming, const QString &pre
 	next.excludeFromCapture = doc_.excludeFromCapture;
 
 	/* Keep outputs whose display survives unchanged; stop the rest. */
-	for (const QString &id : outputs_.keys()) {
+	for (const QString &id : outputs_.keys() + ndi_.keys()) {
 		const DisplayMapping *cur = doc_.display(id);
 		DisplayMapping *nd = next.display(id);
 		const bool same = cur && nd && cur->kind == nd->kind && cur->identity.uuid == nd->identity.uuid;
@@ -908,7 +957,7 @@ bool Controller::applyLayout(const MappingDocument &incoming, const QString &pre
 	for (auto &nd : next.displays) {
 		const DisplayMapping *cur = doc_.display(nd.id);
 		/* Run state follows what is actually running, never the file. */
-		nd.outputWanted = cur && outputs_.value(nd.id) && cur->outputWanted;
+		nd.outputWanted = cur && (outputs_.value(nd.id) || ndi_.contains(nd.id)) && cur->outputWanted;
 	}
 
 	doc_ = next;
@@ -1098,7 +1147,7 @@ int Controller::liveFullscreenCount() const
 {
 	int n = 0;
 	for (const auto &d : doc_.displays)
-		if (outputMode(d.id) == OutputMode::Fullscreen)
+		if (outputMode(d.id) == OutputMode::Fullscreen || outputMode(d.id) == OutputMode::Ndi)
 			n++;
 	return n;
 }
@@ -1125,6 +1174,8 @@ void Controller::setRestoreOutputs(bool on)
 
 OutputMode Controller::outputMode(const QString &displayId) const
 {
+	if (ndi_.contains(displayId))
+		return OutputMode::Ndi;
 	OutputWindow *w = outputs_.value(displayId);
 	if (!w)
 		return OutputMode::None;
@@ -1146,6 +1197,8 @@ bool Controller::startFullscreen(const QString &displayId, QString *error)
 		return fail(QStringLiteral("Unknown display."));
 	if (d->kind == DisplayKind::Virtual)
 		return fail(QStringLiteral("Virtual displays can only be opened as a window."));
+	if (d->kind == DisplayKind::Ndi)
+		return fail(QStringLiteral("NDI displays are sent over the network: use Start NDI."));
 
 	/* Re-check identity against the live display list right now (rescan
 	 * only: resuming from here would recurse back into startFullscreen). */
@@ -1194,6 +1247,11 @@ bool Controller::openWindow(const QString &displayId, QString *error)
 			*error = QStringLiteral("Unknown display.");
 		return false;
 	}
+	if (d->kind == DisplayKind::Ndi) {
+		if (error)
+			*error = QStringLiteral("NDI displays are sent over the network: use Start NDI.");
+		return false;
+	}
 	if (outputs_.value(displayId))
 		stopOutput(displayId, false);
 
@@ -1209,6 +1267,23 @@ bool Controller::openWindow(const QString &displayId, QString *error)
 
 void Controller::stopOutput(const QString &displayId, bool userInitiated)
 {
+	if (ndi_.contains(displayId)) {
+		std::weak_ptr<ndi::Sender> gone = ndi_.take(displayId);
+		publishNdiTargets();
+		/* The graphics thread lets go of the sender on its next frame; wait
+		 * for that (briefly) so the NDI source is really closed before a
+		 * restart under the same name. */
+		for (int i = 0; i < 50 && !gone.expired(); i++)
+			QThread::msleep(5);
+		if (userInitiated)
+			if (DisplayMapping *d = doc_.display(displayId)) {
+				d->outputWanted = false;
+				saveTimer_.start();
+			}
+		if (!shuttingDown_)
+			emit outputsChanged();
+		return;
+	}
 	QPointer<OutputWindow> w = outputs_.take(displayId);
 	if (w) {
 		bool wasFullscreen = w->mode() == OutputWindow::Mode::Fullscreen;
@@ -1252,12 +1327,76 @@ void Controller::stopAll()
 void Controller::startAll()
 {
 	for (const auto &d : doc_.displays) {
+		if (d.kind == DisplayKind::Ndi && outputMode(d.id) == OutputMode::None) {
+			startNdi(d.id);
+			continue;
+		}
 		if (d.kind != DisplayKind::Physical || outputMode(d.id) == OutputMode::Fullscreen)
 			continue;
 		DisplayStatus st = status(d.id);
 		if (isConnected(st.match) && st.canFullscreen)
 			startFullscreen(d.id);
 	}
+}
+
+void Controller::publishNdiTargets()
+{
+	std::vector<gfx::NdiTarget> t;
+	for (auto it = ndi_.begin(); it != ndi_.end(); ++it)
+		t.push_back({it.key().toStdString(), it.value()});
+	gfx::setNdiTargets(std::move(t));
+}
+
+bool Controller::startNdi(const QString &displayId, QString *error)
+{
+	auto fail = [&](const QString &msg) {
+		if (error)
+			*error = msg;
+		blog(LOG_WARNING, "[output-mapping] NDI refused for '%s': %s", qPrintable(displayId), qPrintable(msg));
+		return false;
+	};
+	DisplayMapping *d = doc_.display(displayId);
+	if (!d)
+		return fail(QStringLiteral("Unknown display."));
+	if (d->kind != DisplayKind::Ndi)
+		return fail(QStringLiteral("Only NDI displays can be sent over NDI."));
+	if (ndi_.contains(displayId))
+		return true;
+	for (auto it = ndi_.begin(); it != ndi_.end(); ++it) {
+		const DisplayMapping *o = doc_.display(it.key());
+		if (o && o->name == d->name)
+			return fail(QStringLiteral("Another NDI display is already sending as “%1”.").arg(d->name));
+	}
+	obs_video_info ovi = {};
+	const bool haveVideo = obs_get_video_info(&ovi);
+	QString err;
+	auto sender =
+		ndi::Sender::create(d->name, haveVideo ? (int)ovi.fps_num : 30, haveVideo ? (int)ovi.fps_den : 1, &err);
+	if (!sender) {
+		const bool hadError = ndiError_ == err;
+		ndiError_ = err;
+		if (!hadError)
+			recomputeStatuses();
+		emit outputsChanged();
+		return fail(err);
+	}
+	if (!ndiError_.isEmpty()) {
+		ndiError_.clear();
+		recomputeStatuses();
+	}
+	ndi_.insert(displayId, sender);
+	publishNdiTargets();
+	d->outputWanted = true;
+	saveTimer_.start();
+	blog(LOG_INFO, "[output-mapping] NDI '%s' sending (%dx%d px)", qPrintable(d->name), d->width, d->height);
+	emit outputsChanged();
+	return true;
+}
+
+int Controller::ndiConnections(const QString &displayId) const
+{
+	auto s = ndi_.value(displayId);
+	return s ? s->connections() : -1;
 }
 
 OutputWindowOptions Controller::optionsFor(QScreen *target) const
@@ -1318,18 +1457,27 @@ void Controller::sampleHealth()
 		return;
 	bool any = false;
 	QSet<QString> running;
-	for (auto it = outputs_.begin(); it != outputs_.end(); ++it) {
-		OutputWindow *w = it.value();
-		if (!w)
-			continue;
+	/* Frames delivered so far, per running output (windows: drawn; NDI: sent). */
+	QHash<QString, uint64_t> counts;
+	QHash<QString, OutputWindow *> windows;
+	for (auto it = outputs_.begin(); it != outputs_.end(); ++it)
+		if (it.value()) {
+			counts.insert(it.key(), it.value()->frameCount());
+			windows.insert(it.key(), it.value());
+		}
+	for (auto it = ndi_.begin(); it != ndi_.end(); ++it)
+		counts.insert(it.key(), it.value()->framesSent());
+	for (auto it = counts.begin(); it != counts.end(); ++it) {
+		OutputWindow *w = windows.value(it.key());
 		any = true;
 		running.insert(it.key());
 		/* Frames drawn divided by the REAL time since the last sample: the
 		 * sampling timer runs on the UI thread and can fire late or early
 		 * when the UI is busy, which must not look like dropped frames. */
-		const uint64_t f = w->frameCount();
+		const uint64_t f = it.value();
 		const qint64 now = healthClock_.nsecsElapsed();
-		const bool first = !lastFrames_.contains(it.key());
+		/* A restarted output (new window / sender) counts from zero again. */
+		const bool first = !lastFrames_.contains(it.key()) || f < lastFrames_.value(it.key());
 		const uint64_t df = first ? 0 : f - lastFrames_.value(it.key());
 		const qint64 dt = first ? 0 : now - lastSampleNs_.value(it.key());
 		lastFrames_.insert(it.key(), f);
@@ -1347,11 +1495,16 @@ void Controller::sampleHealth()
 			if (z == 3 && !stalled_.contains(it.key())) {
 				stalled_.insert(it.key());
 				const DisplayMapping *d = doc_.display(it.key());
-				blog(LOG_WARNING,
-				     "[output-mapping] output '%s' is NOT RENDERING (0 fps for 3 s; surface %s, window %dx%d %s)",
-				     d ? qPrintable(d->name) : qPrintable(it.key()),
-				     w->hasSurface() ? "created" : "MISSING", w->width(), w->height(),
-				     w->isVisible() ? "visible" : "hidden");
+				if (w)
+					blog(LOG_WARNING,
+					     "[output-mapping] output '%s' is NOT RENDERING (0 fps for 3 s; surface %s, window %dx%d %s)",
+					     d ? qPrintable(d->name) : qPrintable(it.key()),
+					     w->hasSurface() ? "created" : "MISSING", w->width(), w->height(),
+					     w->isVisible() ? "visible" : "hidden");
+				else
+					blog(LOG_WARNING,
+					     "[output-mapping] NDI output '%s' is NOT SENDING (0 fps for 3 s)",
+					     d ? qPrintable(d->name) : qPrintable(it.key()));
 			}
 		} else {
 			zeroSeconds_.remove(it.key());
@@ -1393,8 +1546,11 @@ void Controller::resumeWantedOutputs()
 	if (!loaded_ || shuttingDown_ || !doc_.restoreOutputs || resuming_)
 		return;
 	resuming_ = true;
-	QStringList toStart;
+	QStringList toStart, ndiStart;
 	for (const auto &d : doc_.displays) {
+		if (d.outputWanted && d.kind == DisplayKind::Ndi && outputMode(d.id) == OutputMode::None &&
+		    (ndiError_.isEmpty() || ndi::runtimeAvailable()))
+			ndiStart << d.id; /* once the runtime failed, don't retry on every screen change */
 		if (!d.outputWanted || d.kind != DisplayKind::Physical || outputMode(d.id) != OutputMode::None)
 			continue;
 		DisplayStatus st = status(d.id);
@@ -1405,6 +1561,11 @@ void Controller::resumeWantedOutputs()
 		if (const DisplayMapping *d = doc_.display(id))
 			blog(LOG_INFO, "[output-mapping] resuming fullscreen output '%s'", qPrintable(d->name));
 		startFullscreen(id);
+	}
+	for (const QString &id : ndiStart) {
+		if (const DisplayMapping *d = doc_.display(id))
+			blog(LOG_INFO, "[output-mapping] resuming NDI output '%s'", qPrintable(d->name));
+		startNdi(id);
 	}
 	resuming_ = false;
 }
@@ -1508,7 +1669,11 @@ QJsonObject Controller::stateJson() const
 		const Identify idm = identify(id);
 		d["identify"] = idm == Identify::Pattern ? "pattern" : idm == Identify::Outlines ? "outlines" : "off";
 		OutputMode m = outputMode(id);
-		d["output"] = m == OutputMode::Fullscreen ? "fullscreen" : m == OutputMode::Window ? "window" : "none";
+		d["output"] = m == OutputMode::Fullscreen ? "fullscreen"
+			      : m == OutputMode::Window   ? "window"
+			      : m == OutputMode::Ndi      ? "ndi"
+							  : "none";
+		d["ndiConnections"] = ndiConnections(id);
 		d["outputFps"] = outputFps(id);
 		d["outputStalled"] = outputStalled(id);
 		ds[i] = d;
@@ -1534,6 +1699,8 @@ QJsonObject Controller::stateJson() const
 		});
 	}
 	o["screens"] = ss;
+	o["ndiRuntime"] = ndi::runtimeAvailable() ? ndi::runtimeVersion() : QString();
+	o["ndiError"] = ndiError_;
 	o["programWidth"] = programW_;
 	o["programHeight"] = programH_;
 	o["selectedDisplay"] = selDisplay_;

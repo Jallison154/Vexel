@@ -21,8 +21,13 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QRectF>
 
 #include <functional>
+#include <memory>
 #include <vector>
 #include <string>
+
+namespace om::ndi {
+class Sender;
+}
 
 namespace om::gfx {
 
@@ -97,5 +102,16 @@ struct ThumbnailRequest {
 };
 void setThumbnailRequests(std::vector<ThumbnailRequest> requests);
 QImage latestThumbnail(const std::string &displayId);
+
+/* ---- NDI displays ----
+ * Every OBS frame, each target's display is rendered at its own resolution
+ * through renderDisplay() (same as a fullscreen output: slices, delay,
+ * test pattern), read back without stalling (2 frames late) and handed to
+ * its sender. Set from the UI thread. */
+struct NdiTarget {
+	std::string displayId;
+	std::shared_ptr<ndi::Sender> sender;
+};
+void setNdiTargets(std::vector<NdiTarget> targets);
 
 } // namespace om::gfx

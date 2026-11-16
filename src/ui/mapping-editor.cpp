@@ -28,6 +28,8 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QActionGroup>
 #include <QDropEvent>
@@ -356,13 +358,13 @@ void MappingEditor::buildUi()
 	tb->addSeparator();
 	/* Live controls sit on the left so they can never overflow off the
 	 * toolbar on narrow windows. */
-	tb->addAction(QStringLiteral("▶ Start All"), this, [this]() {
-		  c_->startAll();
-	  })->setToolTip(QStringLiteral("Start fullscreen on every display that is connected and identified"));
+	tb->addAction(QStringLiteral("▶ Start All"), this, [this]() { c_->startAll(); })
+		->setToolTip(QStringLiteral("Start fullscreen on every display that is connected and identified, "
+					    "and every NDI display"));
 	tb->addAction(QStringLiteral("■ Stop All"), this, [this]() {
 		  int live = 0;
 		  for (const DisplayMapping &d : c_->doc().displays)
-			  if (c_->outputMode(d.id) == OutputMode::Fullscreen)
+			  if (c_->outputMode(d.id) == OutputMode::Fullscreen || c_->outputMode(d.id) == OutputMode::Ndi)
 				  live++;
 		  if (live > 0) {
 			  QMessageBox box(QMessageBox::Warning, QStringLiteral("Stop All Outputs?"),
@@ -700,12 +702,16 @@ QWidget *MappingEditor::buildEmptyState()
 	auto *menu = new QMenu(add);
 	connect(menu, &QMenu::aboutToShow, this, [this, menu]() { populateAddDisplayMenu(menu); });
 	add->setMenu(menu);
+	auto *ndiBtn = new QPushButton(QStringLiteral("Add NDI Output…"), w);
+	ndiBtn->setToolTip(QStringLiteral("Send a mapped display over the network as an NDI source"));
+	connect(ndiBtn, &QPushButton::clicked, this, &MappingEditor::addNdiDisplay);
 	auto *virt = new QPushButton(QStringLiteral("Add Virtual Display for Testing…"), w);
 	connect(virt, &QPushButton::clicked, this, &MappingEditor::addVirtualDisplay);
 	v->addWidget(title);
 	v->addWidget(text);
 	v->addSpacing(4);
 	v->addWidget(add);
+	v->addWidget(ndiBtn);
 	v->addWidget(virt);
 	v->addStretch(1);
 	return w;
@@ -1031,7 +1037,8 @@ void MappingEditor::rebuildTree()
 							 : c_->identify(d.id) == Identify::Outlines
 								 ? QStringLiteral("   ⚠ OUTLINES")
 								 : QString())));
-		di->setIcon(0, dotIcon(m == OutputMode::Fullscreen ? QColor(theme::kLive) : statusColor(st, d.kind)));
+		di->setIcon(0, dotIcon(m == OutputMode::Fullscreen || m == OutputMode::Ndi ? QColor(theme::kLive)
+											   : statusColor(st, d.kind)));
 		QColor badgeColor;
 		di->setText(1, statusBadge(st, d.kind, m, badgeColor));
 		di->setForeground(1, badgeColor);
@@ -1131,6 +1138,9 @@ void MappingEditor::rebuildScreenCombo()
 		if (isConnected(st.match) && st.screen == i && d->kind == DisplayKind::Physical)
 			current = screenCombo_->count() - 1;
 	}
+	screenCombo_->addItem(QStringLiteral("NDI (network source)"), -2);
+	if (d->kind == DisplayKind::Ndi)
+		current = screenCombo_->count() - 1;
 	screenCombo_->addItem(QStringLiteral("Virtual (window only)"), -1);
 	if (d->kind == DisplayKind::Virtual)
 		current = screenCombo_->count() - 1;
@@ -1176,10 +1186,11 @@ void MappingEditor::updateInspector()
 			QStringLiteral("<span style='color:%1'>●</span> %2").arg(statusColor(st, d->kind).name(), text));
 
 		const bool isVirtual = d->kind == DisplayKind::Virtual;
+		const bool isNdi = d->kind == DisplayKind::Ndi;
 		auto *form = qobject_cast<QFormLayout *>(displayBox_->layout());
 		if (form) {
-			form->setRowVisible(virtRow_, isVirtual);
-			form->setRowVisible(resLabel_, !isVirtual);
+			form->setRowVisible(virtRow_, hasFixedSize(d->kind));
+			form->setRowVisible(resLabel_, !hasFixedSize(d->kind));
 		}
 		virtW_->setValue(d->width);
 		virtH_->setValue(d->height);
@@ -1215,7 +1226,17 @@ void MappingEditor::updateInspector()
 		}
 
 		OutputMode m = c_->outputMode(d->id);
-		if (m == OutputMode::Fullscreen) {
+		windowBtn_->setVisible(!isNdi);
+		if (isNdi) {
+			const bool on = m == OutputMode::Ndi;
+			fullscreenBtn_->setText(on ? QStringLiteral("■ Stop NDI") : QStringLiteral("▶ Start NDI"));
+			fullscreenBtn_->setObjectName(on ? "Live" : "Primary");
+			fullscreenBtn_->setEnabled(true);
+			fullscreenBtn_->setToolTip(
+				on ? QString()
+				   : QStringLiteral("Send this display on the network as the NDI source “%1”")
+						.arg(d->name));
+		} else if (m == OutputMode::Fullscreen) {
 			fullscreenBtn_->setText(QStringLiteral("■ Stop Fullscreen"));
 			fullscreenBtn_->setObjectName("Live");
 			fullscreenBtn_->setEnabled(true);
@@ -1290,6 +1311,8 @@ void MappingEditor::updateHeaders()
 			live = QStringLiteral("  <span style='color:%1'>● LIVE</span>").arg(theme::kLive);
 		else if (m == OutputMode::Window)
 			live = QStringLiteral("  <span style='color:%1'>◻ window</span>").arg(theme::kAccent);
+		else if (m == OutputMode::Ndi)
+			live = QStringLiteral("  <span style='color:%1'>● NDI</span>").arg(theme::kLive);
 		if (c_->identify(d->id) != Identify::Off)
 			live += QStringLiteral("  <span style='color:%1'><b>● %2 ON OUTPUT</b></span>")
 					.arg(theme::kLive)
@@ -1418,14 +1441,19 @@ void MappingEditor::showTreeMenu(const QPoint &pos)
 			       [this, id]() { c_->setDisplayLocked(id, true); });
 		menu.addAction(QStringLiteral("Unlock All Slices"), this,
 			       [this, id]() { c_->setDisplayLocked(id, false); });
-		QAction *fs = menu.addAction(c_->outputMode(id) == OutputMode::Fullscreen
-						     ? QStringLiteral("Stop Fullscreen")
-						     : QStringLiteral("Start Fullscreen"),
+		const DisplayMapping *cd = c_->doc().display(id);
+		const bool ndiKind = cd && cd->kind == DisplayKind::Ndi;
+		const OutputMode om = c_->outputMode(id);
+		QAction *fs = menu.addAction(ndiKind ? (om == OutputMode::Ndi ? QStringLiteral("Stop NDI")
+									      : QStringLiteral("Start NDI"))
+					     : om == OutputMode::Fullscreen ? QStringLiteral("Stop Fullscreen")
+									    : QStringLiteral("Start Fullscreen"),
 					     this, &MappingEditor::startFullscreenSelected);
 		fs->setEnabled(fullscreenBtn_->isEnabled());
-		menu.addAction(c_->outputMode(id) == OutputMode::Window ? QStringLiteral("Close Window")
-									: QStringLiteral("Open Window"),
-			       this, &MappingEditor::toggleWindowSelected);
+		if (!ndiKind)
+			menu.addAction(om == OutputMode::Window ? QStringLiteral("Close Window")
+								: QStringLiteral("Open Window"),
+				       this, &MappingEditor::toggleWindowSelected);
 		menu.addSeparator();
 		menu.addAction(QStringLiteral("Move Up"), this,
 			       [this, id]() { c_->moveDisplay(id, c_->doc().displayIndex(id) - 1); });
@@ -1463,8 +1491,46 @@ void MappingEditor::populateAddDisplayMenu(QMenu *m)
 		m->addAction(label, this, [this, i]() { c_->addPhysicalDisplay(i); });
 	}
 	m->addSeparator();
+	m->addAction(QStringLiteral("NDI Output (network source)…"), this, &MappingEditor::addNdiDisplay);
 	m->addAction(QStringLiteral("Virtual Display for Testing (window only)…"), this,
 		     &MappingEditor::addVirtualDisplay);
+}
+
+void MappingEditor::addNdiDisplay()
+{
+	QDialog dlg(this);
+	dlg.setWindowTitle(QStringLiteral("Add NDI Output"));
+	auto *form = new QFormLayout(&dlg);
+	auto *intro = new QLabel(QStringLiteral("An NDI output sends a mapped display over the network. Receivers "
+						"(NDI Studio Monitor, vMix, another OBS, LED processors…) see it as "
+						"an NDI source. Needs the NDI Runtime (NDI Tools) on this computer."),
+				 &dlg);
+	intro->setWordWrap(true);
+	intro->setObjectName("SectionHint");
+	form->addRow(intro);
+	auto *name = new QLineEdit(QStringLiteral("Vexel NDI"), &dlg);
+	name->setToolTip(QStringLiteral("Receivers show it as “COMPUTER (name)”"));
+	form->addRow(QStringLiteral("Source name"), name);
+	int pw = 0, ph = 0;
+	c_->programSize(pw, ph);
+	auto *w = new QSpinBox(&dlg), *h = new QSpinBox(&dlg);
+	w->setRange(16, 7680);
+	h->setRange(16, 4320);
+	w->setValue(pw > 0 ? std::min(pw, 7680) : 1920);
+	h->setValue(ph > 0 ? std::min(ph, 4320) : 1080);
+	auto *res = new QHBoxLayout();
+	res->addWidget(w);
+	res->addWidget(new QLabel(QStringLiteral("×"), &dlg));
+	res->addWidget(h);
+	form->addRow(QStringLiteral("Resolution"), res);
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+	buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Add NDI Output"));
+	connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+	form->addRow(buttons);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+	c_->addNdiDisplay(name->text(), w->value(), h->value());
 }
 
 void MappingEditor::addVirtualDisplay()
@@ -1505,8 +1571,14 @@ void MappingEditor::startFullscreenSelected()
 	const QString id = c_->selectedDisplay();
 	if (id.isEmpty())
 		return;
-	if (c_->outputMode(id) == OutputMode::Fullscreen) {
+	if (c_->outputMode(id) == OutputMode::Fullscreen || c_->outputMode(id) == OutputMode::Ndi) {
 		c_->stopOutput(id);
+		return;
+	}
+	if (const DisplayMapping *nd = c_->doc().display(id); nd && nd->kind == DisplayKind::Ndi) {
+		QString err;
+		if (!c_->startNdi(id, &err))
+			QMessageBox::warning(this, QStringLiteral("Can't Start NDI"), err);
 		return;
 	}
 	DisplayStatus st = c_->status(id);

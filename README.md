@@ -35,6 +35,25 @@ is the place they would go).
 
 ## Features
 
+- **NDI outputs** (*＋ Display ▸ NDI Output…*, or pick *NDI (network
+  source)* under *Output to*): a display with a resolution you choose that
+  goes out over the network as an NDI source instead of to a screen.
+  Receivers (NDI Studio Monitor, vMix, another OBS, LED processors that
+  take NDI) see it as `COMPUTER (name)`. It is composited exactly like a
+  fullscreen output: slices, per-output delay with crossfade, test pattern
+  and slice outlines all apply, 1:1 slices are pixel-exact, at the OBS frame
+  rate. Video only. **▶ Start NDI** / **■ Stop NDI** in the editor and dock;
+  the dock shows the frames per second sent and how many receivers are
+  connected. A running NDI output comes back after an OBS restart, and
+  renaming it re-announces the source under its new name.
+  - Needs the free **NDI Runtime** on the computer (installed with
+    [NDI Tools](https://ndi.video/tools/)); Vexel loads it from where NDI
+    installs it and ships nothing NDI itself. Without it, NDI displays say
+    *NDI Runtime not installed* and everything else works as before.
+  - Rendering and sending never hold up OBS: frames are read back from the
+    GPU two frames late (no stall) and sent from a separate thread; if the
+    network falls behind, the newest frame wins.
+
 - **Vexel dock** in the main OBS window (OBS ▸ *Docks ▸
   Vexel*; shown automatically the first time): a confidence monitor with a
   live thumbnail of exactly what each display receives (including delay and
@@ -345,6 +364,16 @@ mkdir -p ~/Library/Application\ Support/obs-studio/plugins && ditto ~/Library/Ca
 
   The harness currently launches OBS the macOS way; on Windows, run the
   steps in [docs/windows-test-plan.md](docs/windows-test-plan.md).
+- NDI end-to-end test (`tools/ndi_test.py`): runs OBS with a stand-in NDI
+  library (`tools/ndi_stub.cpp`) that records every frame Vexel would send,
+  and checks format, frame rate, pixel-exact content, delay, test pattern,
+  rename, stop, resume after restart and a missing runtime. No NDI install
+  or network needed:
+
+  ```bash
+  clang++ -std=c++17 -dynamiclib -arch arm64 -arch x86_64 -o /tmp/libndi_stub.dylib tools/ndi_stub.cpp
+  python3 tools/ndi_test.py --obs-app /Applications/OBS.app --work /tmp/omndi --stub /tmp/libndi_stub.dylib
+  ```
 
 ## Walkthrough: 3840×1080 Program onto two 1920×1080 displays
 
@@ -401,7 +430,9 @@ Vendor name `output-mapping`, called via `CallVendorRequest`:
 | `SetState` | `{state}` | Replace the whole mapping (same JSON as `mappings.json`; rects are `{"x","y","w","h"}` objects) |
 | `EditorCapture` | `{path}` | Save a screenshot of the editor; the live previews are rendered through their own GPU path |
 | `StartFullscreen` / `OpenWindow` / `StopOutput` | `{displayId}` or `{displayName}` | Per-display output control (identity safety checks apply) |
-| `StartAll` / `StopAll` | – | All exactly identified displays / all outputs |
+| `StartNdi` | `{displayId}` or `{displayName}` | Start sending an NDI display (stop it with `StopOutput`) |
+| `RenameDisplay` | `{displayName` or `displayId, name}` | Rename a display (a running NDI source is re-announced) |
+| `StartAll` / `StopAll` | – | All exactly identified displays and NDI displays / all outputs |
 | `Undo` / `Redo` | – | Same as the editor buttons |
 | `ListPresets` / `SavePreset` / `LoadPreset` / `DeletePreset` | `{name}` | Layout presets, e.g. recall from a Stream Deck |
 | `SetDelay` | `{displayName, delayMs}` | Per-output video delay (0 = live); changes crossfade (0.5 s) |
@@ -416,13 +447,14 @@ Vendor name `output-mapping`, called via `CallVendorRequest`:
 ```
 src/core/            geometry.hpp (drag/resize/snap/clip math), display-match.hpp (identity rules); pure C++, unit tested
 src/model/           mapping document, JSON, immutable render snapshot shared with the graphics thread
-src/render/          GPU compositor (slices, overlays, snapshots)
+src/render/          GPU compositor (slices, overlays, snapshots, NDI frame readback)
+src/output/          NDI sender (loads the NDI Runtime at run time, sends from a worker thread)
 src/platform/        display enumeration and fullscreen windows (macOS .mm, generic Qt fallback)
 src/ui/              obs_display widget, output window, interactive preview, editor, theme
 src/controller.*     selection, mutations, display status, outputs, persistence
 src/plugin-main.cpp  module entry, Tools menu, hotkeys, obs-websocket vendor
 tests/               core unit tests
-tools/               acceptance test, websocket client, test patterns
+tools/               acceptance test, NDI test + stand-in NDI library, websocket client, test patterns
 ```
 
 ## Verification

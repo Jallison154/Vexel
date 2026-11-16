@@ -9,6 +9,7 @@ the Free Software Foundation; either version 2 of the License, or
 */
 
 #include "render/compositor.hpp"
+#include "output/ndi-sender.hpp"
 
 #include <obs.h>
 #include <graphics/matrix4.h>
@@ -118,6 +119,31 @@ static void destroyThumb(ThumbSlot &t)
 
 static void thumbTick(const RenderState &st);
 
+/* NDI displays: full-resolution render targets with a 3-stage readback
+ * ring each (graphics thread), targets shared with the UI (mutex). */
+struct NdiSlot {
+	uint32_t w = 0, h = 0;
+	gs_texrender_t *tr = nullptr;
+	static constexpr int kStages = 3;
+	gs_stagesurf_t *stage[kStages] = {nullptr, nullptr, nullptr};
+	bool primed[kStages] = {false, false, false};
+	unsigned cycle = 0;
+	std::shared_ptr<ndi::Sender> sender;
+};
+static std::mutex g_ndiMutex;
+static std::vector<NdiTarget> g_ndiTargets;
+static std::unordered_map<std::string, NdiSlot> g_ndiSlots;
+
+static void destroyNdiSlot(NdiSlot &s)
+{
+	gs_texrender_destroy(s.tr);
+	for (gs_stagesurf_t *st : s.stage)
+		gs_stagesurface_destroy(st);
+	s = NdiSlot{};
+}
+
+static void ndiTick(const RenderState &st);
+
 void init()
 {
 	if (g_quad)
@@ -148,6 +174,13 @@ void shutdown()
 	for (auto &kv : g_thumbSlots)
 		destroyThumb(kv.second);
 	g_thumbSlots.clear();
+	for (auto &kv : g_ndiSlots)
+		destroyNdiSlot(kv.second);
+	g_ndiSlots.clear();
+	{
+		std::lock_guard<std::mutex> lock(g_ndiMutex);
+		g_ndiTargets.clear();
+	}
 	for (auto &kv : g_delays)
 		destroyLine(kv.second);
 	g_delays.clear();
@@ -496,6 +529,7 @@ static void delayTick(void *)
 	}
 
 	thumbTick(*st);
+	ndiTick(*st);
 }
 
 void setCanvasView(const QRectF &cv, int vpX, int vpY, int vpW, int vpH)
@@ -729,6 +763,74 @@ static void thumbTick(const RenderState &st)
 			}
 		}
 		t.cycle++;
+	}
+}
+
+void setNdiTargets(std::vector<NdiTarget> targets)
+{
+	std::lock_guard<std::mutex> lock(g_ndiMutex);
+	g_ndiTargets = std::move(targets);
+}
+
+static void ndiTick(const RenderState &st)
+{
+	std::vector<NdiTarget> targets;
+	{
+		std::lock_guard<std::mutex> lock(g_ndiMutex);
+		targets = g_ndiTargets;
+	}
+	/* Drop slots whose display stopped sending (or got a new sender). */
+	for (auto it = g_ndiSlots.begin(); it != g_ndiSlots.end();) {
+		bool keep = false;
+		for (const auto &t : targets)
+			keep = keep || (t.displayId == it->first && t.sender == it->second.sender);
+		if (!keep) {
+			destroyNdiSlot(it->second);
+			it = g_ndiSlots.erase(it);
+		} else {
+			++it;
+		}
+	}
+
+	for (const NdiTarget &t : targets) {
+		auto d = st.displays.find(t.displayId);
+		if (d == st.displays.end() || !t.sender || d->second.width <= 0 || d->second.height <= 0)
+			continue;
+		const uint32_t w = (uint32_t)d->second.width, h = (uint32_t)d->second.height;
+		NdiSlot &s = g_ndiSlots[t.displayId];
+		if (s.w != w || s.h != h || s.sender != t.sender) {
+			destroyNdiSlot(s); /* new sender or resolution: start over */
+			s.w = w;
+			s.h = h;
+			s.sender = t.sender;
+			s.tr = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
+			for (gs_stagesurf_t *&ss : s.stage)
+				ss = gs_stagesurface_create(w, h, GS_BGRA);
+		}
+		if (!s.tr || !s.stage[0] || !s.stage[1] || !s.stage[2])
+			continue;
+
+		gs_texrender_reset(s.tr);
+		if (gs_texrender_begin_with_color_space(s.tr, w, h, GS_CS_SRGB)) {
+			vec4 black;
+			vec4_set(&black, 0.0f, 0.0f, 0.0f, 1.0f);
+			gs_clear(GS_CLEAR_COLOR, &black, 0.0f, 0);
+			renderDisplay(d->second, w, h, false); /* exactly what a fullscreen output shows */
+			gs_texrender_end(s.tr);
+		}
+		const int k = s.cycle % NdiSlot::kStages, prev = (s.cycle + 1) % NdiSlot::kStages;
+		gs_stage_texture(s.stage[k], gs_texrender_get_texture(s.tr));
+		s.primed[k] = true;
+		/* The oldest staged frame is finished on the GPU: no stall. */
+		if (s.primed[prev]) {
+			uint8_t *data = nullptr;
+			uint32_t linesize = 0;
+			if (gs_stagesurface_map(s.stage[prev], &data, &linesize)) {
+				s.sender->submit(data, linesize, w, h);
+				gs_stagesurface_unmap(s.stage[prev]);
+			}
+		}
+		s.cycle++;
 	}
 }
 

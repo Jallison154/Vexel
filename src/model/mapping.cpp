@@ -143,7 +143,9 @@ QJsonObject MappingDocument::toJson() const
 		ds.append(QJsonObject{
 			{"id", d.id},
 			{"name", d.name},
-			{"kind", d.kind == DisplayKind::Virtual ? "virtual" : "physical"},
+			{"kind", d.kind == DisplayKind::Virtual ? "virtual"
+				 : d.kind == DisplayKind::Ndi   ? "ndi"
+								: "physical"},
 			{"identity", ident},
 			{"width", d.width},
 			{"height", d.height},
@@ -171,7 +173,10 @@ MappingDocument MappingDocument::fromJson(const QJsonObject &obj)
 		if (d.id.isEmpty())
 			d.id = newId();
 		d.name = o.value("name").toString("Display");
-		d.kind = o.value("kind").toString() == "virtual" ? DisplayKind::Virtual : DisplayKind::Physical;
+		const QString kind = o.value("kind").toString();
+		d.kind = kind == "virtual" ? DisplayKind::Virtual
+			 : kind == "ndi"   ? DisplayKind::Ndi
+					   : DisplayKind::Physical;
 		QJsonObject id = o.value("identity").toObject();
 		d.identity.uuid = id.value("uuid").toString().toStdString();
 		d.identity.vendor = (uint32_t)id.value("vendor").toInteger();

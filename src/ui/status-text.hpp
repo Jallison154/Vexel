@@ -24,7 +24,7 @@ namespace om {
 
 inline QColor statusColor(const DisplayStatus &st, DisplayKind kind)
 {
-	if (kind == DisplayKind::Virtual)
+	if (kind == DisplayKind::Virtual || kind == DisplayKind::Ndi)
 		return QColor(theme::kMuted);
 	switch (st.match) {
 	case MatchStatus::Connected:
@@ -50,9 +50,17 @@ inline QString statusBadge(const DisplayStatus &st, DisplayKind kind, OutputMode
 		color = QColor(theme::kAccent);
 		return QStringLiteral("WINDOW");
 	}
+	if (m == OutputMode::Ndi) {
+		color = QColor(theme::kLive);
+		return QStringLiteral("● NDI");
+	}
 	if (kind == DisplayKind::Virtual) {
 		color = QColor(theme::kMuted);
 		return QStringLiteral("VIRTUAL");
+	}
+	if (kind == DisplayKind::Ndi) {
+		color = QColor(theme::kMuted);
+		return QStringLiteral("NDI");
 	}
 	switch (st.match) {
 	case MatchStatus::Ambiguous:

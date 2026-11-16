@@ -12,6 +12,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "controller.hpp"
+#include "output/ndi-sender.hpp"
 #include "render/compositor.hpp"
 #include "ui/mapping-editor.hpp"
 #include "ui/logo.hpp"
@@ -247,6 +248,32 @@ VENDOR_REQ(OpenWindow)
 			return setError(res, "unknown display");
 		if (!Controller::instance()->openWindow(id, &err))
 			return setError(res, err);
+		setStateJson(res);
+	});
+}
+
+VENDOR_REQ(StartNdi)
+{
+	runBlocking([&]() {
+		QString id = resolveDisplay(req), err;
+		if (id.isEmpty())
+			return setError(res, "unknown display");
+		if (!Controller::instance()->startNdi(id, &err))
+			return setError(res, err);
+		setStateJson(res);
+	});
+}
+
+VENDOR_REQ(RenameDisplay)
+{
+	runBlocking([&]() {
+		QString id = resolveDisplay(req);
+		QString name = QString::fromUtf8(obs_data_get_string(req, "name")).trimmed();
+		if (id.isEmpty())
+			return setError(res, "unknown display");
+		if (name.isEmpty())
+			return setError(res, "missing 'name'");
+		Controller::instance()->renameDisplay(id, name);
 		setStateJson(res);
 	});
 }
@@ -629,6 +656,8 @@ static void registerVendor()
 	REG(SetState);
 	REG(StartFullscreen);
 	REG(OpenWindow);
+	REG(StartNdi);
+	REG(RenameDisplay);
 	REG(StopOutput);
 	REG(StopAll);
 	REG(StartAll);
@@ -673,8 +702,9 @@ static void teardown()
 		obs_frontend_remove_dock(kDockId); /* deletes the dock and its displays */
 	Controller::destroy();
 	obs_enter_graphics();
-	gfx::shutdown();
+	gfx::shutdown(); /* releases the last NDI senders */
 	obs_leave_graphics();
+	ndi::shutdownRuntime();
 }
 
 static void frontendEvent(enum obs_frontend_event event, void *)

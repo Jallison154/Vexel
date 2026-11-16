@@ -50,6 +50,8 @@ target_sources(
     src/core/display-match.hpp
     src/model/mapping.cpp
     src/model/mapping.hpp
+    src/output/ndi-sender.cpp
+    src/output/ndi-sender.hpp
     src/platform/platform.hpp
     src/render/compositor.cpp
     src/render/compositor.hpp

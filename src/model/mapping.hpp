@@ -41,7 +41,14 @@ struct Slice {
 enum class DisplayKind {
 	Physical, /* bound to a real monitor/HDMI output by identity      */
 	Virtual,  /* no monitor; fixed resolution, windowed output only   */
+	Ndi,      /* no monitor; fixed resolution, sent as an NDI source  */
 };
+
+/* Displays with a resolution set by the user (no monitor behind them). */
+inline bool hasFixedSize(DisplayKind k)
+{
+	return k == DisplayKind::Virtual || k == DisplayKind::Ndi;
+}
 
 /* One output display and the slices composited onto it. Slices are kept in
  * sidebar order: index 0 is the TOP of the list and is drawn LAST (on top). */
@@ -52,7 +59,7 @@ struct DisplayMapping {
 	DisplayIdentity identity;
 	int width = 1920; /* physical display pixels (last known for Physical) */
 	int height = 1080;
-	bool outputWanted = false; /* fullscreen was running: resume when the exact display is present */
+	bool outputWanted = false; /* fullscreen (or NDI) was running: resume when possible */
 	int delayMs = 0;           /* video delay for this output (0 = live), see kMaxDelayMs */
 	std::vector<Slice> slices;
 

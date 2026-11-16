@@ -205,11 +205,17 @@ OutputDock::OutputDock(std::function<void()> openEditor, QWidget *parent)
 				/* Amber when clearly below the OBS frame rate. */
 				const double target = gfx::videoFps();
 				const bool low = target > 0 && fps < target * 0.9;
-				l->setText(low ? QStringLiteral("<b style='color:%1'>%2 / %3 fps</b>")
-							   .arg(theme::kWarn)
-							   .arg(fps)
-							   .arg((int)std::lround(target))
-					       : QStringLiteral("<span style='opacity:0.75'>%1 fps</span>").arg(fps));
+				QString t = low ? QStringLiteral("<b style='color:%1'>%2 / %3 fps</b>")
+							    .arg(theme::kWarn)
+							    .arg(fps)
+							    .arg((int)std::lround(target))
+						: QStringLiteral("<span style='opacity:0.75'>%1 fps</span>").arg(fps);
+				const int rx = ctl->ndiConnections(id);
+				if (rx >= 0)
+					t += QStringLiteral("<span style='opacity:0.75'> · %1 receiver%2</span>")
+						     .arg(rx)
+						     .arg(rx == 1 ? "" : "s");
+				l->setText(t);
 			}
 		}
 	});
@@ -231,12 +237,13 @@ void OutputDock::stopAllConfirmed()
 	Controller *c = Controller::instance();
 	int live = 0;
 	for (const DisplayMapping &d : c->doc().displays)
-		if (c->outputMode(d.id) == OutputMode::Fullscreen)
+		if (c->outputMode(d.id) == OutputMode::Fullscreen || c->outputMode(d.id) == OutputMode::Ndi)
 			live++;
 	if (live > 0) {
 		QMessageBox box(
 			QMessageBox::Warning, QStringLiteral("Stop All Outputs?"),
-			QStringLiteral("%1 fullscreen output(s) are live. Stopping them blacks out those screens.")
+			QStringLiteral(
+				"%1 output(s) are live (fullscreen or NDI). Stopping them blacks out those screens.")
 				.arg(live),
 			QMessageBox::NoButton, this);
 		QPushButton *stop = box.addButton(QStringLiteral("Stop All"), QMessageBox::DestructiveRole);
@@ -298,10 +305,13 @@ QWidget *OutputDock::makeTile(const QString &id)
 	v->addWidget(preview);
 
 	auto *buttons = new QHBoxLayout();
-	auto *fs = new QPushButton(m == OutputMode::Fullscreen ? QStringLiteral("■ Stop Fullscreen")
-							       : QStringLiteral("▶ Fullscreen"),
-				   tile);
-	fs->setEnabled(m == OutputMode::Fullscreen ||
+	const bool isNdi = d->kind == DisplayKind::Ndi;
+	auto *fs =
+		new QPushButton(isNdi ? (m == OutputMode::Ndi ? QStringLiteral("■ Stop NDI") : QStringLiteral("▶ NDI"))
+				: m == OutputMode::Fullscreen ? QStringLiteral("■ Stop Fullscreen")
+							      : QStringLiteral("▶ Fullscreen"),
+				tile);
+	fs->setEnabled(isNdi || m == OutputMode::Fullscreen ||
 		       (d->kind == DisplayKind::Physical && isConnected(st.match) && st.canFullscreen));
 	fs->setToolTip(d->kind == DisplayKind::Virtual ? QStringLiteral("Virtual displays only open as a window")
 						       : st.text);
@@ -309,6 +319,7 @@ QWidget *OutputDock::makeTile(const QString &id)
 				    tile);
 	buttons->addWidget(fs, 1);
 	buttons->addWidget(win);
+	win->setVisible(!isNdi);
 	if (idm != Identify::Off) {
 		auto *clear = new QPushButton(QStringLiteral("Clear Pattern"), tile);
 		clear->setToolTip(QStringLiteral("Turn off the test pattern / outlines on this output"));
@@ -320,8 +331,14 @@ QWidget *OutputDock::makeTile(const QString &id)
 
 	connect(fs, &QPushButton::clicked, tile, [this, id]() {
 		Controller *ctl = Controller::instance();
-		if (ctl->outputMode(id) == OutputMode::Fullscreen) {
+		if (ctl->outputMode(id) == OutputMode::Fullscreen || ctl->outputMode(id) == OutputMode::Ndi) {
 			ctl->stopOutput(id);
+			return;
+		}
+		if (const DisplayMapping *nd = ctl->doc().display(id); nd && nd->kind == DisplayKind::Ndi) {
+			QString err;
+			if (!ctl->startNdi(id, &err))
+				QMessageBox::warning(this, QStringLiteral("Can't Start NDI"), err);
 			return;
 		}
 		const DisplayStatus s = ctl->status(id);
