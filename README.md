@@ -1,6 +1,12 @@
 <p align="center"><img src="docs/images/vexel-banner.png" alt="Vexel" width="880"></p>
 
-<p align="center"><a href="https://buymeacoffee.com/okamidesigns"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-okamidesigns-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a></p>
+<p align="center">
+  <a href="https://github.com/Jallison154/Vexel/releases"><img src="https://img.shields.io/github/v/release/Jallison154/Vexel?include_prereleases&label=release&color=19D3F5" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/OBS%20Studio-33.0.1-302E31?logo=obsstudio&logoColor=white" alt="OBS Studio 33.0.1">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-8B5CF6" alt="Windows and macOS">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0--or--later-blue" alt="GPL-2.0-or-later"></a>
+  <a href="https://buymeacoffee.com/okamidesigns"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-okamidesigns-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
+</p>
 
 # Vexel
 
@@ -25,7 +31,32 @@ including transitions, and runs independently of streaming and recording.
 **[Report a problem](https://github.com/Jallison154/Vexel/issues)** ·
 **[What's been tested](VERIFICATION.md)**
 
-![Vexel editor: Input Selection (Program canvas, top) and Output Placement (one display, bottom)](docs/images/editor.png)
+<p align="center"><img src="docs/images/shot-editor.png" alt="Vexel editor: a 3840×1080 Program split across two LED walls. Input Selection (top) picks the part of Program, Output Placement (bottom) places it on the display" width="100%"></p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/shot-projection.png" alt="Corner pin on a projector slice, with the selected point highlighted"><br>
+      <b>Projection mapping.</b> Corner pin, mesh warp and soft edges, edited right in Output Placement. Arrow keys nudge the selected point.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/shot-outputs.png" alt="What two blended projectors receive: each one warped, with a soft edge where they overlap"><br>
+      <b>What the projectors get.</b> Two overlapping projectors, each warped to its surface, with the overlap faded so the blend is even.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/shot-pattern.png" alt="Per-slice test pattern with a pixel ruler, edge lines and the slice's size and position"><br>
+      <b>Test pattern per slice.</b> Edges, a pixel ruler, and the slice's name, size and position, for lining up real screens.
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/images/shot-dock.png" alt="Vexel dock with live thumbnails of each display" width="260"><br>
+      <b>Confidence dock.</b> A live thumbnail and status for every output, inside the main OBS window.
+    </td>
+  </tr>
+</table>
+
+<sub>Screenshots are from the plugin running in OBS 33.0.1 on macOS. The Program shown is a generated test graphic. To recreate them, run <code>tools/readme_shots.py</code>.</sub>
 
 ```
 Program canvas 3840×1080
@@ -118,7 +149,6 @@ what's new in each version.
   update at the OBS frame rate and contain no native video windows, so
   resizing, docking or floating the dock can't disturb OBS or the outputs.
 
-  ![Vexel dock](docs/images/dock.png)
 
 - **One editor window** (Tools ▸ *Vexel Output Mapping…*): a display and slice
   sidebar, plus two synchronized live previews side by side.
@@ -562,3 +592,5 @@ and version (from `data/manifest.json`; keep its `version` in step with
 `buildspec.json`).
 
 Copyright © 2026 Okami Designs. Released under the GNU General Public License v2.0 or later (see [LICENSE](LICENSE)), as required for plugins linking libobs.
+
+<p align="center"><br><img src="docs/images/vexel-mark.png" alt="" width="56"><br><sub><b>Vexel</b> by Okami Designs · <a href="https://buymeacoffee.com/okamidesigns">Buy me a coffee</a></sub></p>

@@ -93,10 +93,12 @@ coordinates (a 1 px shift changes the value by 67).
 | extra | **Real borderless fullscreen** output opened on the built-in display and kept in place by the placement watchdog, restored automatically after an OBS restart (exact UUID match), and its restore flag cleared when the user stops it | ✅ |
 | extra | Delete a slice with the Delete key, Undo restores it exactly, Redo removes it again | ✅ |
 
-The editor screenshots in `docs/images/` were captured by the plugin's
-`EditorCapture`, which composites each live preview, rendered through its
-own GPU draw path, into a Qt grab of the window. That avoids needing
-macOS Screen Recording permission.
+The screenshots in `docs/images/` are made by `tools/readme_shots.py`,
+which runs an isolated OBS. Editor and dock images come from the plugin's
+`EditorCapture` / `DockCapture`. Those composite each live preview,
+rendered through its own GPU draw path, into a Qt grab of the window, so
+macOS Screen Recording permission isn't needed. Output images come from
+`Snapshot`, which renders exactly what the display receives.
 
 ## Show-readiness soak test (Mac, version 0.5.0)
 
