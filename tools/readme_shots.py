@@ -6,7 +6,7 @@ websocket port; never touches your real OBS). Program shows a generated
 Vexel graphic, so the images contain no third-party footage.
 
 Needs Pillow (pip install pillow). Writes to docs/images/:
-  vexel-mark.png      the Vexel mark, as drawn by the plugin
+  vexel-mark.png      the Vexel mark, cut from docs/images/vexel-banner.png
   shot-editor.png     editor: a 3840x1080 Program split across two LED walls
   shot-projection.png editor: corner pin + soft edge on a blended projector
   shot-outputs.png    what the two blended projectors actually receive
@@ -58,6 +58,23 @@ def spaced(draw, xy, text, fnt, fill, spacing, anchor_center=True):
     return total
 
 
+def banner_mark(path):
+    """Cut the Vexel mark out of the README banner, keying out the dark background."""
+    im = Image.open(os.path.join(OUT, "vexel-banner.png")).convert("RGB").crop((316, 4, 538, 134))
+    out = Image.new("RGBA", im.size)
+    src, dst = im.load(), out.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b = src[x, y]
+            a = max(0.0, min(1.0, (max(r, g, b) - 60) / 110))
+            if a <= 0:
+                dst[x, y] = (0, 0, 0, 0)
+                continue
+            dst[x, y] = (min(255, int(r / a)), min(255, int(g / a)), min(255, int(b / a)), int(a * 255))
+    out.save(path)
+    return path
+
+
 def program_graphic(mark_path, path):
     """A 3840x1080 show graphic in the Vexel style."""
     img = Image.new("RGB", (CW, CH))
@@ -93,12 +110,14 @@ def program_graphic(mark_path, path):
     img = Image.blend(img, glow.filter(ImageFilter.GaussianBlur(28)), 0.25)
 
     d = ImageDraw.Draw(img)
-    mark = Image.open(mark_path).convert("RGBA").resize((520, 520), Image.LANCZOS)
+    mark = Image.open(mark_path).convert("RGBA")
+    mark = mark.resize((680, round(mark.height * 680 / mark.width)), Image.LANCZOS)
+    pos = (CW // 2 - mark.width // 2, 560 - mark.height)
     halo = Image.new("RGBA", (CW, CH), (0, 0, 0, 0))
-    halo.paste(mark, (CW // 2 - 260, 90), mark)
+    halo.paste(mark, pos, mark)
     halo = halo.filter(ImageFilter.GaussianBlur(40))
     img.paste(halo, (0, 0), halo)
-    img.paste(mark, (CW // 2 - 260, 90), mark)
+    img.paste(mark, pos, mark)
     spaced(d, (CW / 2, 610), "VEXEL", font(190), (245, 248, 255), 46)
     sub = font(52, heavy=False)
     w = spaced(d, (CW / 2, 835), "OBS OUTPUT MAPPING", sub, (225, 235, 250), 22)
@@ -142,13 +161,11 @@ def projector_layout():
 
 
 def shoot(ws, work):
-    r = ws.vendor("LogoCapture", {"path": os.path.join(work, "mark.png"), "size": 1024})
-    if not r.get("ok"):
-        raise RuntimeError(f"LogoCapture: {r}")
-    to_png(os.path.join(work, "mark.png"), os.path.join(OUT, "vexel-mark.png"), 256)
+    mark = banner_mark(os.path.join(work, "mark.png"))
+    Image.open(mark).save(os.path.join(OUT, "vexel-mark.png"), optimize=True)
 
     gfx = os.path.join(work, "program.png")
-    program_graphic(os.path.join(work, "mark.png"), gfx)
+    program_graphic(mark, gfx)
     ws.call("SetVideoSettings", {"baseWidth": CW, "baseHeight": CH, "outputWidth": 1920,
                                  "outputHeight": 540, "fpsNumerator": 30, "fpsDenominator": 1})
     scenes = [s["sceneName"] for s in ws.call("GetSceneList")["scenes"]]
