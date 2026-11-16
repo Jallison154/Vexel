@@ -10,6 +10,8 @@ projectors and NDI outputs. It is not made or endorsed by the OBS Project.
 It was previously called "Output Mapping"; existing installs upgrade in
 place (see [Upgrading](#upgrading-from-output-mapping)).
 
+Vexel combines vector and pixel, reflecting how the plugin uses geometry to position, scale, and warp video across displays.
+
 Draw **slices** on the live Program canvas, assign each slice to a display
 (HDMI output, projector or NDI source), and independently adjust **which
 part of Program it grabs** (Input Selection) and **where it lands on the
