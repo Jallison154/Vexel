@@ -1,5 +1,7 @@
 <p align="center"><img src="docs/images/vexel-banner.png" alt="Vexel: OBS output mapping by Okami Designs" width="880"></p>
 
+<p align="center"><a href="https://buymeacoffee.com/okamidesigns"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-okamidesigns-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a></p>
+
 # Vexel: OBS output mapping
 
 **Vexel** by Okami Designs (formerly "Output Mapping") is a native OBS Studio plugin for multi-display output mapping. Draw
