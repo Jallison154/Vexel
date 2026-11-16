@@ -56,7 +56,7 @@ including transitions, and runs independently of streaming and recording.
   </tr>
 </table>
 
-<sub>Screenshots are from the plugin running in OBS 33.0.1 on macOS. The Program shown is a generated test graphic. To recreate them, run <code>tools/readme_shots.py</code>.</sub>
+<sub>Screenshots are from the plugin running in OBS 33.0.1 on macOS. The Program shown is the Vexel banner. To recreate them, run <code>tools/readme_shots.py</code>.</sub>
 
 ```
 Program canvas 3840×1080

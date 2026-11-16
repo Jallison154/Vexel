@@ -2,8 +2,8 @@
 """Regenerate the README screenshots from a real, isolated OBS.
 
 Uses the same isolated harness as acceptance_test.py (its own OBS home and
-websocket port; never touches your real OBS). Program shows a generated
-Vexel graphic, so the images contain no third-party footage.
+websocket port; never touches your real OBS). Program shows the
+README banner (docs/images/vexel-banner.png) scaled to fill the canvas.
 
 Needs Pillow (pip install pillow). Writes to docs/images/:
   vexel-mark.png      the Vexel mark, cut from docs/images/vexel-banner.png
@@ -23,7 +23,7 @@ import secrets
 import sys
 import time
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import acceptance_test as at  # noqa: E402
@@ -33,29 +33,6 @@ R = at.R
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "docs", "images")
 CW, CH = 3840, 1080
-CYAN, VIOLET = (25, 211, 245), (139, 92, 246)
-
-
-def font(size, heavy=True):
-    for path, idx in (("/System/Library/Fonts/Avenir Next.ttc", 8 if heavy else 5),
-                      ("/System/Library/Fonts/Supplemental/Futura.ttc", 2)):
-        try:
-            return ImageFont.truetype(path, size, index=idx)
-        except OSError:
-            continue
-    return ImageFont.load_default()
-
-
-def spaced(draw, xy, text, fnt, fill, spacing, anchor_center=True):
-    widths = [draw.textlength(c, font=fnt) for c in text]
-    total = sum(widths) + spacing * (len(text) - 1)
-    x, y = xy
-    if anchor_center:
-        x -= total / 2
-    for c, w in zip(text, widths):
-        draw.text((x, y), c, font=fnt, fill=fill)
-        x += w + spacing
-    return total
 
 
 def banner_mark(path):
@@ -75,55 +52,13 @@ def banner_mark(path):
     return path
 
 
-def program_graphic(mark_path, path):
-    """A 3840x1080 show graphic in the Vexel style."""
-    img = Image.new("RGB", (CW, CH))
-    px = img.load()
-    for y in range(CH):
-        t = y / (CH - 1)
-        for x in range(0, CW):
-            u = x / (CW - 1)
-            c = 1 - abs(u - 0.5) * 2
-            r = int(4 + 8 * c + 6 * t)
-            g = int(8 + 16 * c * (1 - t))
-            b = int(20 + 36 * c + 18 * t)
-            px[x, y] = (r, g, b)
-    glow = Image.new("RGB", (CW, CH))
-    gd = ImageDraw.Draw(glow)
-    # Screen panels receding left and right, like the Vexel banner.
-    for side in (-1, 1):
-        for i in range(5):
-            w = 300 - i * 40
-            h = 380 - i * 50
-            cx = CW / 2 + side * (620 + i * 330)
-            top = 330 + i * 25
-            col = tuple(int(c * (0.55 - i * 0.08)) for c in (40, 120, 255))
-            gd.rounded_rectangle([cx - w / 2, top, cx + w / 2, top + h], 10, fill=col)
-            gd.rounded_rectangle([cx - w / 2, top, cx + w / 2, top + h], 10, outline=CYAN, width=3)
-    # Floor grid.
-    for i in range(-24, 25):
-        gd.line([(CW / 2 + i * 40, 760), (CW / 2 + i * 420, CH)], fill=(20, 70, 120), width=2)
-    for j, y in enumerate((790, 830, 880, 945, 1030)):
-        gd.line([(0, y), (CW, y)], fill=(20, 70, 120), width=2)
-    gd.line([(0, 760), (CW, 760)], fill=CYAN, width=4)
-    img = Image.blend(img, glow, 0.55)
-    img = Image.blend(img, glow.filter(ImageFilter.GaussianBlur(28)), 0.25)
-
-    d = ImageDraw.Draw(img)
-    mark = Image.open(mark_path).convert("RGBA")
-    mark = mark.resize((680, round(mark.height * 680 / mark.width)), Image.LANCZOS)
-    pos = (CW // 2 - mark.width // 2, 560 - mark.height)
-    halo = Image.new("RGBA", (CW, CH), (0, 0, 0, 0))
-    halo.paste(mark, pos, mark)
-    halo = halo.filter(ImageFilter.GaussianBlur(40))
-    img.paste(halo, (0, 0), halo)
-    img.paste(mark, pos, mark)
-    spaced(d, (CW / 2, 610), "VEXEL", font(190), (245, 248, 255), 46)
-    sub = font(52, heavy=False)
-    w = spaced(d, (CW / 2, 835), "OBS OUTPUT MAPPING", sub, (225, 235, 250), 22)
-    d.line([(CW / 2 - w / 2 - 260, 870), (CW / 2 - w / 2 - 60, 870)], fill=CYAN, width=8)
-    d.line([(CW / 2 + w / 2 + 60, 870), (CW / 2 + w / 2 + 260, 870)], fill=VIOLET, width=8)
-    img.save(path)
+def program_graphic(path):
+    """The README banner, scaled to fill the 3840x1080 Program."""
+    im = Image.open(os.path.join(OUT, "vexel-banner.png")).convert("RGB")
+    scale = max(CW / im.width, CH / im.height)
+    im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
+    x, y = (im.width - CW) // 2, (im.height - CH) // 2
+    im.crop((x, y, x + CW, y + CH)).save(path)
 
 
 def to_png(src, dst, width=None):
@@ -165,7 +100,7 @@ def shoot(ws, work):
     Image.open(mark).save(os.path.join(OUT, "vexel-mark.png"), optimize=True)
 
     gfx = os.path.join(work, "program.png")
-    program_graphic(mark, gfx)
+    program_graphic(gfx)
     ws.call("SetVideoSettings", {"baseWidth": CW, "baseHeight": CH, "outputWidth": 1920,
                                  "outputHeight": 540, "fpsNumerator": 30, "fpsDenominator": 1})
     scenes = [s["sceneName"] for s in ws.call("GetSceneList")["scenes"]]
