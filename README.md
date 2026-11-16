@@ -1,15 +1,29 @@
-<p align="center"><img src="docs/images/vexel-banner.png" alt="Vexel: OBS output mapping by Okami Designs" width="880"></p>
+<p align="center"><img src="docs/images/vexel-banner.png" alt="Vexel" width="880"></p>
 
 <p align="center"><a href="https://buymeacoffee.com/okamidesigns"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-okamidesigns-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a></p>
 
-# Vexel: OBS output mapping
+# Vexel
 
-**Vexel** by Okami Designs (formerly "Output Mapping") is a native OBS Studio plugin for multi-display output mapping. Draw
-**slices** on the live Program canvas, assign each
-slice to a display (HDMI output), and independently adjust **which part of
-Program it grabs** (Input Selection) and **where it lands on the display**
-(Output Placement). Every mapped output follows Program live, including
-transitions, and runs independently of streaming and recording.
+**Vexel** is a third-party plugin for [OBS Studio](https://obsproject.com)
+by Okami Designs, for mapping OBS's Program onto multiple displays,
+projectors and NDI outputs. It is not made or endorsed by the OBS Project.
+It was previously called "Output Mapping"; existing installs upgrade in
+place (see [Upgrading](#upgrading-from-output-mapping)).
+
+Draw **slices** on the live Program canvas, assign each slice to a display
+(HDMI output, projector or NDI source), and independently adjust **which
+part of Program it grabs** (Input Selection) and **where it lands on the
+display** (Output Placement), including corner pin, mesh warp and soft
+edges for projection mapping. Every mapped output follows Program live,
+including transitions, and runs independently of streaming and recording.
+
+**[Download](https://github.com/Jallison154/obs-output-mapping/releases)** ·
+**[Install on Windows](#install-on-windows)** ·
+**[Install on macOS](#install-on-macos)** ·
+**[Report a problem](https://github.com/Jallison154/obs-output-mapping/issues)** ·
+**[What's been tested](VERIFICATION.md)**
+
+![Vexel editor: Input Selection (Program canvas, top) and Output Placement (one display, bottom)](docs/images/editor.png)
 
 ```
 Program canvas 3840×1080
@@ -25,15 +39,22 @@ Program canvas 3840×1080
 
 ## Status
 
-| Platform | Status |
-|---|---|
-| **Windows 10 (2004+) / 11, x64**, OBS 33.0.1 | **Primary target.** Native display layer (`src/platform/platform-windows.cpp`). Builds cleanly in CI (MSVC, warnings as errors); [download it from Releases](https://github.com/Jallison154/obs-output-mapping/releases). **Not yet run on a Windows PC:** please work through [docs/windows-test-plan.md](docs/windows-test-plan.md). |
-| macOS 13+ (universal), OBS 33.0.1 | Built and verified end to end; the CI-built installer passes all automated acceptance checks (see [VERIFICATION.md](VERIFICATION.md)). [Download from Releases](https://github.com/Jallison154/obs-output-mapping/releases). |
-| Linux | Generic Qt fallback (`platform-qt.cpp`); not built or tested |
+All releases so far are **betas** (GitHub pre-releases). Built for
+**OBS Studio 33.0.1**; other OBS versions are untested.
 
-Implemented now: rectangular slicing. Corner warping, masks and edge
-blending are not yet implemented (the compositor in `src/render/compositor.cpp`
-is the place they would go).
+| Platform | Release download | Builds in CI | Tested in OBS |
+|---|---|---|---|
+| **Windows 10 (2004+) / 11, x64** | `.zip` | Yes (MSVC, warnings as errors) | Used at live shows by the developer on one Windows 11 PC with physical outputs (LED wall and HDMI displays); see [VERIFICATION.md](VERIFICATION.md#windows-show-pc). No automated tests run on Windows. |
+| **macOS 13+, universal** (Apple Silicon and Intel) | `.pkg` | Yes | Automated end-to-end tests on one Apple Silicon Mac (macOS 27.0.1), using **virtual displays opened as windows** plus one fullscreen output on the built-in screen. **Not tested with external displays**, on Intel Macs, or on macOS versions other than 27. |
+| Linux (Ubuntu 24.04) | none | Yes | Not tested. Uses a generic Qt display layer. |
+
+Exactly what was tested, on which hardware and version, and what still
+needs real hardware: [VERIFICATION.md](VERIFICATION.md).
+
+**Which version has what:** projection mapping (corner pin, mesh warp,
+soft edges) needs **0.8.0 or later**; NDI outputs need **0.7.0 or later**.
+The release notes on [Releases](https://github.com/Jallison154/obs-output-mapping/releases) list
+what's new in each version.
 
 ## Features
 
@@ -60,6 +81,8 @@ is the place they would go).
     outlines follow the warp**, so you can line the grid up on the real
     surface. An untouched corner pin or mesh is still a pixel-exact 1:1
     copy.
+  - Requires Vexel 0.8.0 or later. Masks (cutting a slice to a custom
+    outline) are not implemented.
 
 - **NDI outputs** (*＋ Display ▸ NDI Output…*, or pick *NDI (network
   source)* under *Output to*): a display with a resolution you choose that
@@ -90,7 +113,7 @@ is the place they would go).
   (asks first when live), **Test Pattern All** / **Clear All Patterns**
   (asks first when live) and **Editor…**. "Live previews" pauses the
   thumbnails if you need to save GPU; outputs are unaffected. Thumbnails
-  refresh about 10 times a second and contain no native video windows, so
+  update at the OBS frame rate and contain no native video windows, so
   resizing, docking or floating the dock can't disturb OBS or the outputs.
 
   ![Vexel dock](docs/images/dock.png)
@@ -228,9 +251,11 @@ is the place they would go).
     at any Windows scaling (125 %, 150 %, 175 %…). If a config file can't
     be read it is set aside rather than overwritten, and a `.bak` of the
     last good file is kept.
-- **Persistence**: `~/Library/Application Support/obs-studio/plugin_config/output-mapping/mappings.json`
-  (global, independent of scene collections). Hotkeys are stored in
+- **Persistence**: `mappings.json` in OBS's plugin settings folder, global
+  and independent of scene collections. Hotkeys are stored in
   `hotkeys.json` next to it.
+  - Windows: `%APPDATA%\obs-studio\plugin_config\output-mapping\`
+  - macOS: `~/Library/Application Support/obs-studio/plugin_config/output-mapping/`
 - **Remote control**: obs-websocket vendor `output-mapping`. See
   [Remote control](#remote-control-obs-websocket).
 
@@ -278,7 +303,10 @@ is the place they would go).
 Everything else uses public libobs and obs-frontend-api calls. No private
 symbols or frontend internals are touched.
 
-## Install on Windows (no build needed)
+## Install on Windows
+
+No build needed. Requires Windows 10 (version 2004 or later) or 11, 64-bit,
+and OBS Studio 33.
 
 1. Quit OBS.
 2. Go to [**Releases**](https://github.com/Jallison154/obs-output-mapping/releases) and download
@@ -296,9 +324,9 @@ To uninstall, delete that `output-mapping` folder. Every push to `main`
 also builds a fresh zip on GitHub Actions (*Actions* tab ▸ latest run ▸
 *Artifacts*; requires being signed in to GitHub).
 
-## Install on macOS (no build needed)
+## Install on macOS
 
-Requires macOS 13 or later and OBS Studio 33. The installer is universal
+No build needed. Requires macOS 13 or later and OBS Studio 33. The installer is universal
 (Apple Silicon and Intel).
 
 1. Quit OBS.
@@ -315,6 +343,16 @@ Requires macOS 13 or later and OBS Studio 33. The installer is universal
 5. Start OBS and open **Tools ▸ Vexel Output Mapping…**.
 
 To uninstall, delete `~/Library/Application Support/obs-studio/plugins/output-mapping.plugin`.
+
+For NDI outputs, also install [NDI Tools](https://ndi.video/tools/)
+(includes the free NDI Runtime) and restart OBS.
+
+## Support
+
+Found a bug or have a question? [Open an issue on GitHub](https://github.com/Jallison154/obs-output-mapping/issues).
+Please include your Vexel version (*Options ▸ About Vexel*), your OS, and
+the OBS log of the session (*Help ▸ Log Files ▸ Upload Current Log File*
+in OBS).
 
 ## Building from source
 
@@ -488,7 +526,7 @@ src/core/            geometry.hpp (drag/resize/snap/clip math), display-match.hp
 src/model/           mapping document, JSON, immutable render snapshot shared with the graphics thread
 src/render/          GPU compositor (slices, overlays, snapshots, NDI frame readback)
 src/output/          NDI sender (loads the NDI Runtime at run time, sends from a worker thread)
-src/platform/        display enumeration and fullscreen windows (macOS .mm, generic Qt fallback)
+src/platform/        display enumeration and fullscreen windows (Windows, macOS .mm, generic Qt fallback)
 src/ui/              obs_display widget, output window, interactive preview, editor, theme
 src/controller.*     selection, mutations, display status, outputs, persistence
 src/plugin-main.cpp  module entry, Tools menu, hotkeys, obs-websocket vendor
@@ -503,10 +541,12 @@ which setup, and what still needs testing with real hardware.
 
 ## Upgrading from "Output Mapping"
 
-Vexel is the same plugin under a new name. The install folder
-(`output-mapping`), saved mappings and presets, hotkeys and the
-obs-websocket vendor name (`output-mapping`) are unchanged, so updating
-works exactly as before and nothing needs to be set up again.
+Vexel is the same plugin under a new name. The plugin ID and install
+folder (`output-mapping`), the download file names
+(`output-mapping-<version>-…`), saved mappings and presets, hotkeys and
+the obs-websocket vendor name (`output-mapping`) are unchanged, so
+updating works exactly as before (replace the `output-mapping` folder, or
+run the new `.pkg`) and nothing needs to be set up again.
 
 ## License
 

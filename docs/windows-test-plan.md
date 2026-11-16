@@ -1,11 +1,13 @@
 # Windows test plan
 
-The Windows code path (`src/platform/platform-windows.cpp`, plus the shared
-watchdog and output code) builds cleanly in CI (MSVC, warnings as errors)
-but has **not yet been run on a Windows PC**. Install it from
-[Releases](https://github.com/Jallison154/obs-output-mapping/releases) as
-described in the README. Work through this list on the target PC.
-Everything below is about 45 minutes with two external displays.
+The Windows build is built in CI (MSVC, warnings as errors) and has been
+used at live shows on one Windows PC (see
+[VERIFICATION.md](../VERIFICATION.md#windows-show-pc)), but no automated
+test runs on Windows. For a release review, the short list is
+[release-hardware-checklist.md](release-hardware-checklist.md); this is the
+full plan. Install the release as described in the
+[README](../README.md#install-on-windows). Everything below is about 45
+minutes with two external displays.
 
 Setup: OBS 33.0.1 x64, *Settings ▸ Video ▸ Base (Canvas) Resolution*
 `3840x1080`. Windows display mode **Extend**, both externals at native

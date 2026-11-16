@@ -1,28 +1,76 @@
 # Verification record
 
-## Environment actually tested
+What has actually been tested, on what, and how. Anything not listed here
+is **untested**. Last updated 2026-11-16, for Vexel **0.8.0**.
+
+## Summary
+
+| Platform | Builds in CI (GitHub Actions) | Tested in OBS | Displays used |
+|---|---|---|---|
+| Windows x64 | Yes, every push (`windows-2022`, MSVC, warnings as errors) | Developer's show PC, live shows (manual) | **Physical**: LED wall + HDMI displays |
+| macOS universal | Yes, every push | Automated end-to-end tests on one Mac | **Virtual windows**, plus one fullscreen output on the built-in screen; no external displays |
+| Linux (Ubuntu 24.04) | Yes, every push | **Not tested** | – |
+
+No automated test has run on Windows; no physical-display test has run on
+macOS. OBS **33.0.1** is the only OBS version tested anywhere.
+
+## Environments
+
+### Mac (automated tests)
 
 | | |
 |---|---|
-| Machine | Apple Silicon (M3) laptop, **one display** (built-in Retina, 3420×2224 backing) |
+| Machine | Apple MacBook Air, Apple M3 (`Mac15,12`), **built-in display only** (Liquid Retina, 2560×1664) |
 | macOS | 27.0.1 (build 26A434) |
 | OBS Studio | **33.0.1** official macOS Apple Silicon build (obs-websocket 5.7.6, Qt 6.11.1), OpenGL renderer (default) |
 | Plugin build | Xcode 27.1, CMake 4.5.0, against OBS 33.0.1 sources plus obs-deps / Qt 2026-10-23; universal binary, ad-hoc signed |
-| Date | 2026-11-12 |
 
-No other OBS versions were tested. The plugin uses only APIs that have been
-stable since OBS 30 (`obs_get_main_texture`, `obs_display_*`,
-`obs_add_main_rendered_callback`, the frontend Tools-menu and hotkey APIs),
-but it is built against the 33.0.1 headers and Qt 6.11, so treat other
-versions as untested.
+The automated tests run OBS in an isolated home (own settings and plugins,
+websocket port 4466) so they never touch a normal OBS install.
 
-## Automated
+### Windows show PC
 
-- `output-mapping-core-tests`: geometry (draw, move, resize, aspect lock,
-  snapping, numeric edits, fit, 1:1, clipping) and display identity
-  matching (exact UUID, serial re-identification, twin units, missing
-  serials, duplicate UUIDs). **All pass.**
-- `tools/acceptance_test.py` against a real OBS 33.0.1: **74/74 checks pass** (full log: [docs/results/acceptance-run.txt](docs/results/acceptance-run.txt))
+| | |
+|---|---|
+| Machine | Laptop, Intel Core Ultra 9 275HX, NVIDIA GeForce RTX 5070 Ti Laptop GPU (OBS renders on it with D3D11) plus Intel integrated graphics |
+| Windows | Windows 11 25H2 (10.0 build 26200) |
+| OBS Studio | **33.0.1** (64-bit), Qt 6.11.1 |
+| Outputs | Three **physical** fullscreen outputs: `LED WALL` 2688×1152 on an HDMI 2.0 output, and two 1920×1080 outputs (`SL POSTERS`, `SR POSTERS`) through ROLAND VIDEO and, in a later session, Blackmagic devices |
+
+Evidence:
+
+- **Developer report (2026-11-16):** used the Windows build for multiple
+  live shows and it has been solid. *Which Vexel version(s) were used at
+  those shows is not yet recorded.*
+- **OBS logs from this PC** (supplied by the developer) for 2026-11-13
+  (plugin 0.5.2) and 2026-11-14 (plugin 0.6.2) show:
+  - all three outputs restored automatically at launch on the right
+    displays, each with its video surface created at the display's
+    native size;
+  - live delay changes;
+  - one hot-unplug of all three displays that OBS survived, with all three
+    outputs resuming by themselves when the displays came back (0.6.2);
+  - one crash when two displays dropped (0.6.2). The cause was found and
+    fixed in **0.6.4** (see *Bugs*, item 6). The fix has **not yet been
+    re-tested** on this PC.
+- Nothing newer than 0.6.2 has a recorded Windows result. In particular
+  **NDI outputs (0.7.0+) and projection mapping (0.8.0) have not been run
+  on Windows.**
+
+## Automated (Mac)
+
+Current results, 2026-11-16, on commit `c232b02` (the 0.8.0 code; the next
+commit, `862a52f`, only changes the version number):
+
+| Test | Result | What it covers |
+|---|---|---|
+| `output-mapping-core-tests` | **All pass** | Geometry (draw, move, resize, aspect lock, snapping, numeric edits, fit, 1:1, clipping), display identity matching (exact UUID, serial re-identification, twin units, missing serials, duplicate UUIDs), warp maths (corner pin perspective, mesh through its points, resampling, outlines) |
+| `tools/acceptance_test.py` | **72/72** | The six-step acceptance test below, plus delay, presets, locking, clipboard, identify, restart |
+| `tools/warp_test.py` | **33/33** | Projection mapping: corner pin geometry checked against an independently computed perspective, mesh, editor point drag, arrow-key nudges, Tab, Esc, undo, soft-edge brightness curve, warped test pattern, persistence |
+| `tools/ndi_test.py` | **32/32** | NDI outputs against a **stand-in NDI library** that records every frame: format, frame rate, pixel-exact content, scaling, delay, test pattern, rename, stop, resume after restart, missing runtime. **No real NDI Runtime or network was used.** |
+
+An earlier full log (74 checks, 2026-11-13, version 0.5.2) is in
+[docs/results/acceptance-run.txt](docs/results/acceptance-run.txt).
 
 The acceptance test runs the six steps of the requested acceptance test.
 Since only one physical display was available, the two 1920×1080 outputs
@@ -50,9 +98,10 @@ The editor screenshots in `docs/images/` were captured by the plugin's
 own GPU draw path, into a Qt grab of the window. That avoids needing
 macOS Screen Recording permission.
 
-## Show-readiness soak test
+## Show-readiness soak test (Mac, version 0.5.0)
 
-`tools/soak_test.py`, 30 minutes at **60 fps** with three outputs (2×1920×1080,
+Run once, on 2026-11-12, on **version 0.5.0**; **not re-run** for later
+versions. `tools/soak_test.py`, 30 minutes at **60 fps** with three outputs (2×1920×1080,
 1×1280×720 with scaled slices), nothing else running on the machine. Full
 report: [docs/results/soak-report.md](docs/results/soak-report.md).
 
@@ -65,7 +114,7 @@ report: [docs/results/soak-report.md](docs/results/soak-report.md).
 | Skipped render frames | 32 of 104,397 (0.031 %) |
 | Frame render time | mean 4.95 ms, worst 30 s sample 8.57 ms (budget 16.7 ms) |
 
-**Verdict: SHOW READY** on this Mac. An earlier 10-minute run passed every
+**Verdict at the time: SHOW READY** on this Mac (version 0.5.0). An earlier 10-minute run passed every
 check except one render-time sample taken while the plugin was being
 compiled on the same machine (8.5 ms; skipped frames 0.012 %); the criterion
 was then set to mean < 8 ms and worst sample < 12 ms, and the clean 30-minute
@@ -105,15 +154,19 @@ PC (Windows) before an event: `python3 tools/soak_test.py … --minutes 30`.
    as an identity could have matched a different monitor after Windows
    renumbered them. Those displays now never get an exact identity; they
    show as ambiguous until you confirm them for the session.
+6. **(0.6.4, from the Windows show PC's log.)** OBS could crash when a
+   display disappeared. Stopping an output deleted its window while Windows
+   was still delivering the display-change message to it (and inside Qt's
+   *screen removed* handling). Outputs now stop rendering and hide at once,
+   and the window is deleted afterwards. Not yet re-tested on that PC.
 
-## Windows: not compiled or run yet
+## Windows: what still needs a recorded result
 
-The Windows display layer (`src/platform/platform-windows.cpp`) and the
-Windows paths in the shared code were written on macOS and **have not been
-compiled with MSVC or run on Windows**. They follow the same DisplayConfig
-calls OBS's own Windows monitor capture uses. The template's GitHub Actions
-workflow builds them on `windows-2022` with warnings as errors. The full
-on-device checklist is [docs/windows-test-plan.md](docs/windows-test-plan.md).
+The developer's show use (above) covers the core: physical fullscreen
+outputs, restore at launch and live delay. Still to record, ideally on the
+release being reviewed: see [docs/release-hardware-checklist.md](docs/release-hardware-checklist.md)
+for the short list, and [docs/windows-test-plan.md](docs/windows-test-plan.md)
+for the full one.
 
 ## macOS: not verified here, needs real hardware
 
@@ -130,7 +183,10 @@ See [docs/hardware-test-checklist.md](docs/hardware-test-checklist.md). In short
 - EDID serial re-identification when a display moves to another port. This
   is covered by unit tests only.
 - Scaled ("looks like") modes on an external display, the Metal renderer,
-  Intel Macs (the x86_64 slice is built but not run), Windows and Linux.
+  Intel Macs (the x86_64 slice is built but not run), and Linux.
+- Projection mapping on a real projector (alignment by eye on a surface,
+  soft-edge blending between two overlapping projectors).
+- NDI with the real NDI Runtime and a receiver on the network.
 
 ## Environment notes
 
