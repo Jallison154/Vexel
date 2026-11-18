@@ -606,7 +606,8 @@ VENDOR_REQ(EditorCapture)
 	runBlocking([&]() {
 		MappingEditor *e = openEditor();
 		QString path = QString::fromUtf8(obs_data_get_string(req, "path"));
-		const bool inspector = QString::fromUtf8(obs_data_get_string(req, "part")) == QLatin1String("inspector");
+		const bool inspector = QString::fromUtf8(obs_data_get_string(req, "part")) ==
+				       QLatin1String("inspector");
 		QImage img = !e ? QImage() : inspector ? e->captureInspector() : e->captureImage();
 		if (img.isNull() || path.isEmpty() || !img.save(path))
 			return setError(res, "capture failed");
