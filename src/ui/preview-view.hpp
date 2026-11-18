@@ -102,6 +102,7 @@ private:
 		std::vector<PointD> outline; /* closed polygon */
 		std::vector<PointD> points;  /* control points, row-major */
 		int cols = 0, rows = 0;
+		double rot = 0; /* slice rotation, degrees clockwise about the rect centre */
 		bool contains(double x, double y) const
 		{
 			return warped ? pointInPolygon(outline, x, y) : rect.contains(x, y);
@@ -117,6 +118,8 @@ private:
 		bool warped = false;
 		std::vector<PointD> outline, points;
 		int cols = 0, rows = 0, selPoint = -1;
+		double rot = 0;
+		bool rotHandle = false; /* draw the rotation handle */
 	};
 
 	struct Overlay {
@@ -133,7 +136,7 @@ private:
 		QImage centerLabel;
 	};
 
-	enum class Drag { None, Pan, Create, Move, Resize, Point };
+	enum class Drag { None, Pan, Create, Move, Resize, Point, Rotate };
 
 	void canvasSize(int &w, int &h) const;
 	std::vector<Item> items() const;
@@ -161,7 +164,10 @@ private:
 	IRect dragStartRect_;
 	int dragPoint_ = -1;
 	PointD dragStartPoint_;
-	int hitPoint(const Item &it, const QPointF &canvas) const; /* control point under the cursor, or -1 */
+	int hitPoint(const Item &it, const QPointF &canvas) const;   /* control point under the cursor, or -1 */
+	bool hitRotate(const Item &it, const QPointF &canvas) const; /* over the rotation handle */
+	PointD rotateHandlePos(const IRect &r, double rot, double zoom, double dpr) const;
+	double dragStartRot_ = 0, dragStartAngle_ = 0;
 	Handle dragHandle_ = Handle::None;
 	QString dragSlice_;
 	IRect rubber_;

@@ -18,6 +18,7 @@ the Free Software Foundation; either version 2 of the License, or
 class QAction;
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QFrame;
 class QGroupBox;
 class QLabel;
@@ -75,6 +76,7 @@ private:
 	QWidget *buildInspector();
 
 	void rebuildTree();
+	void refreshTreeBadges();
 	void syncTreeSelection();
 	void rebuildScreenCombo();
 	void updateInspector();
@@ -142,6 +144,13 @@ private:
 	QDoubleSpinBox *warpX_ = nullptr, *warpY_ = nullptr;
 	QSpinBox *feather_[4] = {nullptr, nullptr, nullptr, nullptr};
 	QDoubleSpinBox *featherGamma_ = nullptr;
+	QDoubleSpinBox *rotation_ = nullptr;
+	QToolButton *pmToggle_ = nullptr; /* collapsible PROJECTION MAPPING section */
+	QWidget *pmBody_ = nullptr;
+	QFormLayout *pmForm_ = nullptr;
+	QString inspectedSlice_;      /* slice the inspector last showed */
+	bool inspectedInUse_ = false; /* ...and whether it used projection mapping */
+	QPushButton *rotLeft_ = nullptr, *rotRight_ = nullptr, *rotZero_ = nullptr;
 	QWidget *warpPointRow_ = nullptr;
 	QLabel *scaleLabel_ = nullptr;
 

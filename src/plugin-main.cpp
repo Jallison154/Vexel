@@ -478,6 +478,21 @@ VENDOR_REQ(SetSliceFeather)
 	});
 }
 
+/* Rotate a slice as a whole on its display: degrees, clockwise, about the
+ * centre of its output rect (0 = straight). */
+VENDOR_REQ(SetSliceRotation)
+{
+	runBlocking([&]() {
+		const QString id = resolveSlice(req);
+		if (id.isEmpty())
+			return setError(res, "unknown slice");
+		if (Controller::instance()->isSliceLocked(id))
+			return setError(res, "slice is locked");
+		Controller::instance()->setSliceRotation(id, obs_data_get_double(req, "degrees"));
+		setStateJson(res);
+	});
+}
+
 VENDOR_REQ(SetSliceLocked)
 {
 	runBlocking([&]() {
@@ -782,6 +797,7 @@ static void registerVendor()
 	REG(DeletePreset);
 	REG(Undo);
 	REG(Redo);
+	REG(SetSliceRotation);
 	REG(EditorCapture);
 	REG(EditorDrag);
 	REG(EditorKey);

@@ -15,7 +15,9 @@ the Free Software Foundation; either version 2 of the License, or
 //
 // A warp is a grid of control points stored RELATIVE to the slice's output
 // rectangle (0..1 across it; points may go outside), so moving or resizing
-// the slice carries its warp along.
+// the slice carries its warp along. A slice can also be rotated as a whole
+// (degrees, clockwise on screen) about the centre of its output rectangle;
+// the rotation is applied after the warp, when converting to output pixels.
 //   2 x 2 grid  -> corner pin with true perspective (homography)
 //   larger grid -> mesh warp, smooth (Catmull-Rom) through every point
 
@@ -239,13 +241,42 @@ inline std::vector<PointD> warpOutline(const Warp &w, int perEdge = 32)
 	return out;
 }
 
-/* Normalised (relative to rect) <-> output pixels. */
-inline PointD warpToPixels(const PointD &n, const IRect &r)
+/* Slice rotation: degrees, clockwise on screen (y points down). */
+inline double normalizeAngle(double deg)
 {
-	return {r.x + n.x * r.w, r.y + n.y * r.h};
+	if (!std::isfinite(deg))
+		return 0.0;
+	deg = std::fmod(deg, 360.0);
+	if (deg <= -180.0)
+		deg += 360.0;
+	else if (deg > 180.0)
+		deg -= 360.0;
+	return std::fabs(deg) < 1e-9 ? 0.0 : deg;
 }
-inline PointD pixelsToWarp(const PointD &p, const IRect &r)
+
+inline PointD rectCenter(const IRect &r)
 {
+	return {r.x + r.w / 2.0, r.y + r.h / 2.0};
+}
+
+inline PointD rotateAbout(const PointD &p, const PointD &c, double deg)
+{
+	if (deg == 0.0)
+		return p;
+	const double a = deg * 3.14159265358979323846 / 180.0, cs = std::cos(a), sn = std::sin(a);
+	const double dx = p.x - c.x, dy = p.y - c.y;
+	return {c.x + dx * cs - dy * sn, c.y + dx * sn + dy * cs};
+}
+
+/* Normalised (relative to rect) <-> output pixels, including the slice's
+ * rotation about the centre of the rect. */
+inline PointD warpToPixels(const PointD &n, const IRect &r, double rotDeg = 0.0)
+{
+	return rotateAbout({r.x + n.x * r.w, r.y + n.y * r.h}, rectCenter(r), rotDeg);
+}
+inline PointD pixelsToWarp(const PointD &px, const IRect &r, double rotDeg = 0.0)
+{
+	const PointD p = rotateAbout(px, rectCenter(r), -rotDeg);
 	return {r.w > 0 ? (p.x - r.x) / r.w : 0.0, r.h > 0 ? (p.y - r.y) / r.h : 0.0};
 }
 
@@ -262,14 +293,15 @@ inline bool pointInPolygon(const std::vector<PointD> &poly, double x, double y)
 
 /* Triangle list for the GPU: per vertex x, y (output px) and u, v (0..1
  * across the slice). Covers the slice with segU x segV quads. */
-inline std::vector<float> warpTriangles(const Warp &w, const IRect &dst)
+inline std::vector<float> warpTriangles(const Warp &w, const IRect &dst, double rotDeg = 0.0)
 {
 	const int su = w.active() ? warpSegments(w, w.cols) : 1;
 	const int sv = w.active() ? warpSegments(w, w.rows) : 1;
 	std::vector<PointD> grid((size_t)(su + 1) * (size_t)(sv + 1));
 	for (int j = 0; j <= sv; j++)
 		for (int i = 0; i <= su; i++)
-			grid[(size_t)j * (su + 1) + i] = warpToPixels(evalWarp(w, (double)i / su, (double)j / sv), dst);
+			grid[(size_t)j * (su + 1) + i] =
+				warpToPixels(evalWarp(w, (double)i / su, (double)j / sv), dst, rotDeg);
 	std::vector<float> out;
 	out.reserve((size_t)su * sv * 6 * 4);
 	auto put = [&](int i, int j) {

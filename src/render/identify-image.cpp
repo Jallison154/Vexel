@@ -57,11 +57,11 @@ static void drawSliceOutlines(QPainter &p, const DisplayMapping &d, bool dashed,
 		QColor fill = it->color;
 		fill.setAlpha(dashed ? 0 : 28);
 		p.setBrush(fill);
-		if (it->warp.active() && !isIdentityWarp(it->warp)) {
-			/* The real (warped) shape on the output. */
+		if ((it->warp.active() && !isIdentityWarp(it->warp)) || it->rotation != 0.0) {
+			/* The real (warped / rotated) shape on the output. */
 			QPolygonF poly;
 			for (const PointD &n : warpOutline(it->warp, 48)) {
-				const PointD px = warpToPixels(n, r);
+				const PointD px = warpToPixels(n, r, it->rotation);
 				poly << QPointF(px.x, px.y);
 			}
 			p.setRenderHint(QPainter::Antialiasing, true);
@@ -214,6 +214,8 @@ QImage makeSlicePattern(const Slice &s)
 	if (s.warp.active() && !isIdentityWarp(s.warp))
 		sub += s.warp.cornerPin() ? QStringLiteral(" · corner pin")
 					  : QStringLiteral(" · mesh %1×%2").arg(s.warp.cols).arg(s.warp.rows);
+	if (s.rotation != 0.0)
+		sub += QStringLiteral(" · %1°").arg(s.rotation, 0, 'f', s.rotation == std::round(s.rotation) ? 0 : 1);
 	paintPattern(p, QRect(0, 0, w, h), s.name, sub, s.color, std::min(w, h) < 400);
 	p.end();
 	return img;

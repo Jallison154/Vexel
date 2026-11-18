@@ -185,6 +185,8 @@ QJsonObject MappingDocument::toJson() const
 				so["warp"] = warpToJson(s.warp);
 			if (s.feather.active())
 				so["feather"] = featherToJson(s.feather);
+			if (s.rotation != 0.0)
+				so["rotation"] = s.rotation;
 			ss.append(so);
 		}
 		QJsonObject ident{
@@ -257,6 +259,7 @@ MappingDocument MappingDocument::fromJson(const QJsonObject &obj)
 			s.locked = so.value("locked").toBool(false);
 			s.warp = warpFromJson(so.value("warp"));
 			s.feather = featherFromJson(so.value("feather"));
+			s.rotation = normalizeAngle(so.value("rotation").toDouble(0.0));
 			d.slices.push_back(s);
 		}
 		doc.displays.push_back(std::move(d));
@@ -314,7 +317,8 @@ std::shared_ptr<const RenderState> buildRenderState(const MappingDocument &doc)
 			rs.id = it->id.toStdString();
 			rs.mapped = sliceIsMapped(*it);
 			if (rs.mapped) {
-				rs.tris = std::make_shared<const std::vector<float>>(warpTriangles(it->warp, it->dst));
+				rs.tris = std::make_shared<const std::vector<float>>(
+					warpTriangles(it->warp, it->dst, it->rotation));
 				rs.feather[0] = it->dst.w > 0 ? (float)it->feather.left / it->dst.w : 0.0f;
 				rs.feather[1] = it->dst.w > 0 ? (float)it->feather.right / it->dst.w : 0.0f;
 				rs.feather[2] = it->dst.h > 0 ? (float)it->feather.top / it->dst.h : 0.0f;

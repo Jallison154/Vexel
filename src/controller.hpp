@@ -126,7 +126,8 @@ public:
 	void setWarpPoint(const QString &sliceId, int index, const PointD &outputPx);
 	void nudgeWarpPoint(const QString &sliceId, int index, double dx, double dy); /* output px */
 	void setSliceFeather(const QString &sliceId, const Feather &f);
-	int selectedWarpPoint() const { return selPoint_; } /* -1 = none */
+	void setSliceRotation(const QString &sliceId, double degrees); /* clockwise, about the output centre */
+	int selectedWarpPoint() const { return selPoint_; }            /* -1 = none */
 	void selectWarpPoint(int index);
 	void sliceOneToOne(const QString &sliceId);
 

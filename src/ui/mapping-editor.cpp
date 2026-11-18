@@ -167,6 +167,8 @@ MappingEditor::MappingEditor(QWidget *parent) : QDialog(parent), c_(Controller::
 		if (kind == Change::Structure) {
 			rebuildTree();
 			rebuildScreenCombo();
+		} else {
+			refreshTreeBadges();
 		}
 		updateInspector();
 		updateHeaders();
@@ -819,6 +821,27 @@ QWidget *MappingEditor::buildInspector()
 	flagsRow->addStretch(1);
 	sv->addLayout(flagsRow);
 
+	auto *top = new QFormLayout();
+	top->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	top->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+	sliceDisplay_ = new QComboBox(sliceBox_);
+	sliceDisplay_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	sliceDisplay_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	sliceDisplay_->setMinimumContentsLength(10);
+	sliceDisplay_->setToolTip(QStringLiteral("Move this slice to another display"));
+	top->addRow(QStringLiteral("On display"), sliceDisplay_);
+	sv->addLayout(top);
+
+	/* Small uppercase sub-heading inside the SLICE box. */
+	auto section = [this, sv](const QString &title) {
+		auto *l = new QLabel(title, sliceBox_);
+		l->setObjectName("SubSection");
+		sv->addSpacing(4);
+		sv->addWidget(l);
+		return l;
+	};
+	section(QStringLiteral("POSITION"));
+
 	auto *grid = new QGridLayout();
 	grid->setHorizontalSpacing(4);
 	grid->setVerticalSpacing(4);
@@ -845,45 +868,89 @@ QWidget *MappingEditor::buildInspector()
 	scaleLabel_ = new QLabel(sliceBox_);
 	scaleLabel_->setObjectName("SectionHint");
 	scaleLabel_->setTextFormat(Qt::RichText);
+	scaleLabel_->setWordWrap(true);
 	sv->addWidget(scaleLabel_);
 
-	auto *sf = new QFormLayout();
-	sf->setLabelAlignment(Qt::AlignRight);
-	sf->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-	sliceDisplay_ = new QComboBox(sliceBox_);
-	sliceDisplay_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	sliceDisplay_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-	sliceDisplay_->setMinimumContentsLength(10);
-	sliceDisplay_->setToolTip(QStringLiteral("Move this slice to another display"));
-	sf->addRow(QStringLiteral("On display"), sliceDisplay_);
-	sv->addLayout(sf);
-
-	lockCheck_ = new QCheckBox(QStringLiteral("Keep aspect ratio when resizing"), sliceBox_);
-	sv->addWidget(lockCheck_);
-	auto *sb = new QGridLayout();
+	auto *sizeRow = new QHBoxLayout();
 	auto *fitBtn = fitBtn_ = new QPushButton(QStringLiteral("Fit to Display"), sliceBox_);
 	auto *oneBtn = oneBtn_ = new QPushButton(QStringLiteral("1:1 Pixels"), sliceBox_);
+	sizeRow->addWidget(fitBtn);
+	sizeRow->addWidget(oneBtn);
+	sv->addLayout(sizeRow);
+	lockCheck_ = new QCheckBox(QStringLiteral("Keep aspect ratio when resizing"), sliceBox_);
+	sv->addWidget(lockCheck_);
+
+	auto *sf = new QFormLayout();
+	sf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	sf->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+	auto *rotRow = new QHBoxLayout();
+	rotRow->setSpacing(4);
+	rotation_ = new QDoubleSpinBox(sliceBox_);
+	rotation_->setRange(-180.0, 180.0);
+	rotation_->setDecimals(1);
+	rotation_->setSingleStep(1.0);
+	rotation_->setWrapping(true);
+	rotation_->setSuffix(QStringLiteral("°"));
+	rotation_->setKeyboardTracking(false);
+	rotation_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+	rotation_->setAlignment(Qt::AlignRight);
+	rotation_->setMinimumWidth(56);
+	rotation_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	rotation_->setToolTip(QStringLiteral("Rotate the slice on its display, clockwise, about its centre.\n"
+					     "Or drag the round handle above the slice in Output Placement "
+					     "(Shift: 15° steps)."));
+	rotLeft_ = new QPushButton(QStringLiteral("↺ 90°"), sliceBox_);
+	rotRight_ = new QPushButton(QStringLiteral("↻ 90°"), sliceBox_);
+	rotZero_ = new QPushButton(QStringLiteral("0°"), sliceBox_);
+	rotLeft_->setToolTip(QStringLiteral("Rotate 90° counter-clockwise"));
+	rotRight_->setToolTip(QStringLiteral("Rotate 90° clockwise"));
+	rotZero_->setToolTip(QStringLiteral("Straighten (no rotation)"));
+	rotRow->addWidget(rotation_, 1);
+	rotRow->addWidget(rotLeft_);
+	rotRow->addWidget(rotRight_);
+	rotRow->addWidget(rotZero_);
+	sf->addRow(QStringLiteral("Rotation"), rotRow);
+	auto *orderRow = new QHBoxLayout();
 	auto *upBtn = new QPushButton(QStringLiteral("Bring Forward"), sliceBox_);
 	auto *downBtn = new QPushButton(QStringLiteral("Send Backward"), sliceBox_);
-	sb->addWidget(fitBtn, 0, 0);
-	sb->addWidget(oneBtn, 0, 1);
-	sb->addWidget(upBtn, 1, 0);
-	sb->addWidget(downBtn, 1, 1);
-	sv->addLayout(sb);
+	upBtn->setToolTip(QStringLiteral("Draw this slice above the ones below it (])"));
+	downBtn->setToolTip(QStringLiteral("Draw this slice below the next one ([)"));
+	orderRow->addWidget(upBtn);
+	orderRow->addWidget(downBtn);
+	sf->addRow(QStringLiteral("Layer"), orderRow);
+	sv->addLayout(sf);
 
 	/* ---- projection mapping ---- */
-	auto *pmHead = new QLabel(QStringLiteral("PROJECTION MAPPING"), sliceBox_);
-	pmHead->setObjectName("SectionHint");
-	sv->addSpacing(6);
-	sv->addWidget(pmHead);
-	auto *pm = new QFormLayout();
-	pm->setLabelAlignment(Qt::AlignRight);
+	pmToggle_ = new QToolButton(sliceBox_);
+	pmToggle_->setObjectName("SectionToggle");
+	pmToggle_->setCheckable(true);
+	pmToggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	pmToggle_->setArrowType(Qt::RightArrow);
+	pmToggle_->setText(QStringLiteral("PROJECTION MAPPING"));
+	pmToggle_->setToolTip(QStringLiteral("Corner pin, mesh warp and soft edges for projectors"));
+	/* Never widen the panel for its summary text. */
+	pmToggle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+	pmToggle_->setMinimumWidth(0);
+	sv->addSpacing(4);
+	sv->addWidget(pmToggle_);
+	pmBody_ = new QWidget(sliceBox_);
+	pmBody_->setVisible(false);
+	connect(pmToggle_, &QToolButton::toggled, this, [this](bool on) {
+		pmToggle_->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+		pmBody_->setVisible(on);
+	});
+	auto *pm = pmForm_ = new QFormLayout(pmBody_);
+	pm->setContentsMargins(0, 0, 0, 0);
+	pm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 	pm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 	auto *warpRow = new QHBoxLayout();
 	warpMode_ = new QComboBox(sliceBox_);
 	warpMode_->setToolTip(QStringLiteral("Corner pin: drag the 4 corners to fit any 4-sided surface (with "
 					     "perspective).\nMesh: a grid of points you can bend for curved or "
 					     "uneven surfaces."));
+	warpMode_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	warpMode_->setMinimumContentsLength(6);
+	warpMode_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	warpMode_->addItem(QStringLiteral("Off (rectangle)"), QPoint(0, 0));
 	warpMode_->addItem(QStringLiteral("Corner pin"), QPoint(2, 2));
 	for (int n : {3, 4, 5, 7, 9})
@@ -907,6 +974,7 @@ QWidget *MappingEditor::buildInspector()
 		d->setButtonSymbols(QAbstractSpinBox::NoButtons);
 		d->setAlignment(Qt::AlignRight);
 		d->setMinimumWidth(56);
+		d->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); /* may shrink to fit the panel */
 		return d;
 	};
 	warpX_ = makeD(warpPointRow_);
@@ -929,28 +997,36 @@ QWidget *MappingEditor::buildInspector()
 	auto *fg = new QGridLayout();
 	fg->setHorizontalSpacing(4);
 	const char *fheads[] = {"Left", "Right", "Top", "Bottom"};
+	fg->setVerticalSpacing(4);
 	for (int i = 0; i < 4; i++) {
+		/* 2 x 2: Left / Right, then Top / Bottom */
 		auto *h = new QLabel(QString::fromLatin1(fheads[i]), sliceBox_);
-		h->setAlignment(Qt::AlignCenter);
+		h->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		h->setObjectName("SectionHint");
-		fg->addWidget(h, 0, i);
+		fg->addWidget(h, i / 2, (i % 2) * 2);
 		feather_[i] = makeSpin(sliceBox_, 0);
 		feather_[i]->setMaximum(8192);
 		feather_[i]->setToolTip(QStringLiteral("Soft edge width in output pixels (0 = hard edge). Use it "
 						       "where two projectors overlap."));
-		fg->addWidget(feather_[i], 1, i);
+		fg->addWidget(feather_[i], i / 2, (i % 2) * 2 + 1);
 	}
+	fg->setColumnStretch(1, 1);
+	fg->setColumnStretch(3, 1);
 	pm->addRow(QStringLiteral("Soft edge"), fg);
 	featherGamma_ = new QDoubleSpinBox(sliceBox_);
 	featherGamma_->setRange(0.2, 5.0);
 	featherGamma_->setSingleStep(0.05);
 	featherGamma_->setDecimals(2);
 	featherGamma_->setKeyboardTracking(false);
+	featherGamma_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+	featherGamma_->setAlignment(Qt::AlignRight);
+	featherGamma_->setMinimumWidth(56);
+	featherGamma_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	featherGamma_->setToolTip(QStringLiteral("Blend curve. 1.00 = the two overlapping edges add up to even "
 						 "brightness; raise or lower it if the overlap looks too bright or "
 						 "dark on your projectors."));
 	pm->addRow(QStringLiteral("Edge gamma"), featherGamma_);
-	sv->addLayout(pm);
+	sv->addWidget(pmBody_);
 	v->addWidget(sliceBox_);
 
 	/* ---- display ---- */
@@ -1115,6 +1191,17 @@ QWidget *MappingEditor::buildInspector()
 	for (QSpinBox *f : feather_)
 		connect(f, qOverload<int>(&QSpinBox::valueChanged), this, pushFeather);
 	connect(featherGamma_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, pushFeather);
+	connect(rotation_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		if (!updating_)
+			c_->setSliceRotation(c_->selectedSlice(), v);
+	});
+	auto rotateBy = [this](double by) {
+		if (const Slice *s = c_->doc().slice(c_->selectedSlice()))
+			c_->setSliceRotation(s->id, s->rotation + by);
+	};
+	connect(rotLeft_, &QPushButton::clicked, this, [rotateBy]() { rotateBy(-90.0); });
+	connect(rotRight_, &QPushButton::clicked, this, [rotateBy]() { rotateBy(90.0); });
+	connect(rotZero_, &QPushButton::clicked, this, [this]() { c_->setSliceRotation(c_->selectedSlice(), 0.0); });
 	connect(fitBtn, &QPushButton::clicked, this, [this]() { c_->fitSliceToDisplay(c_->selectedSlice()); });
 	connect(oneBtn, &QPushButton::clicked, this, [this]() { c_->sliceOneToOne(c_->selectedSlice()); });
 	connect(upBtn, &QPushButton::clicked, this, [this]() { moveSelectedSlice(-1); });
@@ -1124,6 +1211,32 @@ QWidget *MappingEditor::buildInspector()
 
 /* ---------------------------------------------------------------------- */
 /* Sync from model                                                         */
+
+/* Short status in the sidebar's second column. */
+static QString sliceBadge(const Slice &s)
+{
+	const bool oneToOne = s.src.w == s.dst.w && s.src.h == s.dst.h;
+	return QStringLiteral("%1%2")
+		.arg(s.locked ? QStringLiteral("🔒 ") : QString())
+		.arg(!s.enabled          ? QStringLiteral("hidden")
+		     : s.rotation != 0.0 ? QStringLiteral("rotated")
+		     : oneToOne          ? QStringLiteral("1:1")
+					 : QStringLiteral("scaled"));
+}
+
+/* Geometry edits don't rebuild the tree; keep the slice badges current. */
+void MappingEditor::refreshTreeBadges()
+{
+	for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
+		if ((*it)->data(0, RoleKind).toInt() != KindSlice)
+			continue;
+		if (const Slice *s = c_->doc().slice((*it)->data(0, RoleId).toString())) {
+			const QString b = sliceBadge(*s);
+			if ((*it)->text(1) != b)
+				(*it)->setText(1, b);
+		}
+	}
+}
 
 void MappingEditor::rebuildTree()
 {
@@ -1167,12 +1280,7 @@ void MappingEditor::rebuildTree()
 			auto *si = new QTreeWidgetItem(di);
 			si->setText(0, s.name);
 			si->setIcon(0, dotIcon(s.color, true));
-			const bool oneToOne = s.src.w == s.dst.w && s.src.h == s.dst.h;
-			si->setText(1, QStringLiteral("%1%2")
-					       .arg(s.locked ? QStringLiteral("🔒 ") : QString())
-					       .arg(!s.enabled ? QStringLiteral("hidden")
-						    : oneToOne ? QStringLiteral("1:1")
-							       : QStringLiteral("scaled")));
+			si->setText(1, sliceBadge(s));
 			si->setForeground(1, QColor(theme::kMuted));
 			si->setToolTip(0, QStringLiteral("Source %1,%2 %3×%4  →  Output %5,%6 %7×%8")
 						  .arg(s.src.x)
@@ -1406,7 +1514,7 @@ void MappingEditor::updateInspector()
 		warpX_->setEnabled(havePoint && !s->locked);
 		warpY_->setEnabled(havePoint && !s->locked);
 		if (havePoint) {
-			const PointD px = warpToPixels(s->warp.pts[(size_t)sp], s->dst);
+			const PointD px = warpToPixels(s->warp.pts[(size_t)sp], s->dst, s->rotation);
 			warpPointLbl_->setText(QStringLiteral("%1 of %2").arg(sp + 1).arg(s->warp.count()));
 			if (!warpX_->hasFocus())
 				warpX_->setValue(px.x);
@@ -1422,9 +1530,37 @@ void MappingEditor::updateInspector()
 		}
 		featherGamma_->setValue(s->feather.gamma);
 		featherGamma_->setEnabled(!s->locked);
+		pmForm_->setRowVisible(featherGamma_, s->feather.active());
+		/* Collapsed header says what's in use; a mapped slice opens it. */
+		QStringList used;
+		if (s->warp.active() && !isIdentityWarp(s->warp))
+			used << (s->warp.cornerPin()
+					 ? QStringLiteral("corner pin")
+					 : QStringLiteral("mesh %1×%2").arg(s->warp.cols).arg(s->warp.rows));
+		if (s->feather.active())
+			used << QStringLiteral("soft edge");
+		pmToggle_->setText(
+			used.isEmpty()
+				? QStringLiteral("PROJECTION MAPPING")
+				: QStringLiteral("PROJECTION MAPPING  ·  %1").arg(used.join(QStringLiteral(", "))));
+		/* Open it when a slice that uses it is selected, or as soon as it's put to use. */
+		const bool inUse = !used.isEmpty() || s->warp.active();
+		if ((s->id != inspectedSlice_ || !inspectedInUse_) && inUse)
+			pmToggle_->setChecked(true);
+		inspectedSlice_ = s->id;
+		inspectedInUse_ = inUse;
+		if (!rotation_->hasFocus())
+			rotation_->setValue(s->rotation);
+		for (QWidget *w : {(QWidget *)rotation_, (QWidget *)rotLeft_, (QWidget *)rotRight_})
+			w->setEnabled(!s->locked);
+		rotZero_->setEnabled(!s->locked && s->rotation != 0.0);
 
 		const bool oneToOne = s->src.w == s->dst.w && s->src.h == s->dst.h;
-		if (oneToOne)
+		if (oneToOne && s->rotation != 0.0)
+			scaleLabel_->setText(
+				QStringLiteral("1:1 size, rotated %1° (not pixel-exact)")
+					.arg(s->rotation, 0, 'f', s->rotation == std::round(s->rotation) ? 0 : 1));
+		else if (oneToOne)
 			scaleLabel_->setText(
 				QStringLiteral("<span style='color:%1'>●</span> 1:1, pixel for pixel").arg(theme::kOk));
 		else

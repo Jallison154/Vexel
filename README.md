@@ -107,6 +107,13 @@ what's new in each version.
     next point, Esc lets go of it (arrows then move the whole slice again).
     The selected point's exact X / Y can also be typed in. *Reset* puts the
     points back on the rectangle. All of it is undoable.
+  - **Rotation:** turn the whole slice on its display (clockwise, about its
+    centre) with *Rotation* in the slice panel, the ↺ 90° / ↻ 90° buttons, or
+    by dragging the round handle above the slice in Output Placement
+    (Shift: 15° steps; it snaps to straight within 2° unless you hold
+    Alt/⌥). The resize handles work along the rotated sides. Rotation
+    combines with corner pin, mesh and soft edges. A rotated slice is not
+    pixel-exact, so keep LED walls at 0° unless the wall itself is turned.
   - The warp is stored relative to the slice's output rectangle, so moving
     or resizing the slice carries it along.
   - Works everywhere the slice goes: fullscreen and windowed outputs, NDI,
@@ -547,6 +554,7 @@ Vendor name `output-mapping`, called via `CallVendorRequest`:
 | `SetWarpPoint` | `{sliceName, index, x, y}` or `{…, dx, dy}` | Move or nudge one warp point (output pixels) |
 | `SelectWarpPoint` | `{sliceName, index}` | Select a point (‑1 = none), as when clicking it in the editor |
 | `SetSliceFeather` | `{sliceName, left, right, top, bottom, gamma}` | Soft edges (output pixels) |
+| `SetSliceRotation` | `{sliceName` or `sliceId, degrees}` | Rotate the slice as a whole on its display, clockwise about its centre (0 = straight; wraps to −180…180) |
 | `Snapshot` | `{displayName, path}` | Render exactly what the display receives to `.png` / `.ppm` |
 | `OpenEditor` / `CloseEditor` / `Select` | … | Editor control |
 | `EditorDrag` / `EditorKey` | … | Automation only: needs `OUTPUT_MAPPING_AUTOMATION=1`. Feeds synthetic mouse and keyboard events to the real editor handlers. |

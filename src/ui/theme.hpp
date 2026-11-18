@@ -47,16 +47,19 @@ QLabel#Chip { background: #0E2A3A; color: #7FE9FF; border: 1px solid #1B5A70; bo
 QFrame#EmptyState { background: #0F1626; border: 1px dashed #26344F; border-radius: 8px; }
 QLabel#EmptyTitle { font-size: 15px; font-weight: 600; color: #DCE6F5; }
 QLabel#SectionHint { color: #8A97AE; font-size: 11px; }
+QLabel#SubSection { color: #19D3F5; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; border-top: 1px solid #1C2740; padding-top: 8px; }
+QToolButton#SectionToggle { color: #19D3F5; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; background: transparent; border: none; border-top: 1px solid #1C2740; padding: 8px 0 2px 0; text-align: left; }
+QToolButton#SectionToggle:hover { color: #7FE9FF; }
 QTreeWidget { background: #0F1626; border: 1px solid #1C2740; border-radius: 8px; padding: 4px; outline: none; }
 QTreeWidget::item { height: 24px; border-radius: 4px; padding-left: 2px; }
 QTreeWidget::item:hover { background: #142036; }
 QTreeWidget::item:selected { background: #0E2A3A; color: #CFF7FF; }
 QGroupBox { background: #0F1626; border: 1px solid #1C2740; border-radius: 8px; margin-top: 18px; padding: 10px 8px 8px 8px; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; top: 2px; color: #8A97AE; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
-QLineEdit, QSpinBox, QComboBox { background: #080D18; border: 1px solid #22304A; border-radius: 4px; padding: 3px 5px; selection-background-color: #19D3F5; selection-color: #0A0F1C; }
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border-color: #19D3F5; }
-QSpinBox:disabled, QLineEdit:disabled, QComboBox:disabled { color: #56627A; background: #0C1220; border-color: #18223A; }
-QSpinBox { font-family: Menlo, Consolas, "Cascadia Mono", monospace; font-size: 11px; }
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: #080D18; border: 1px solid #22304A; border-radius: 4px; padding: 3px 5px; selection-background-color: #19D3F5; selection-color: #0A0F1C; }
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: #19D3F5; }
+QSpinBox:disabled, QDoubleSpinBox:disabled, QLineEdit:disabled, QComboBox:disabled { color: #56627A; background: #0C1220; border-color: #18223A; }
+QSpinBox, QDoubleSpinBox { font-family: Menlo, Consolas, "Cascadia Mono", monospace; font-size: 11px; }
 QComboBox QAbstractItemView { background: #0F1626; border: 1px solid #22304A; selection-background-color: #0E2A3A; }
 QPushButton { background: #172238; border: 1px solid #26344F; border-radius: 5px; padding: 5px 10px; }
 QPushButton:hover { background: #1D2A44; }

@@ -111,14 +111,19 @@ std::vector<PreviewView::Item> PreviewView::items() const
 		it.selected = s.id == selS;
 		it.dim = (kind_ == Kind::Input && d.id != selD) || !s.enabled;
 		it.locked = s.locked;
-		if (kind_ == Kind::Output && s.warp.active()) {
-			it.warped = !isIdentityWarp(s.warp);
-			it.cols = s.warp.cols;
-			it.rows = s.warp.rows;
-			for (const PointD &n : s.warp.pts)
-				it.points.push_back(warpToPixels(n, s.dst));
-			for (const PointD &n : warpOutline(s.warp, 48))
-				it.outline.push_back(warpToPixels(n, s.dst));
+		if (kind_ == Kind::Output) {
+			it.rot = s.rotation;
+			if (s.warp.active()) {
+				it.cols = s.warp.cols;
+				it.rows = s.warp.rows;
+				for (const PointD &n : s.warp.pts)
+					it.points.push_back(warpToPixels(n, s.dst, s.rotation));
+			}
+			if ((s.warp.active() && !isIdentityWarp(s.warp)) || s.rotation != 0.0) {
+				it.warped = true;
+				for (const PointD &n : warpOutline(s.warp, 48))
+					it.outline.push_back(warpToPixels(n, s.dst, s.rotation));
+			}
 		}
 		out.push_back(it);
 	};
@@ -209,7 +214,8 @@ void PreviewView::fitToView()
 		refresh();
 		return;
 	}
-	double margin = 18 * devicePixelRatioF();
+	/* Output Placement: room above the canvas for a full-size slice's rotation handle. */
+	double margin = (kind_ == Kind::Output ? 34 : 18) * devicePixelRatioF();
 	double z = std::min((px.width() - 2 * margin) / cw, (px.height() - 2 * margin) / ch);
 	zoom_ = std::clamp(z, kMinZoom, kMaxZoom);
 	panX_ = (px.width() - cw * zoom_) / 2.0;
@@ -319,6 +325,8 @@ void PreviewView::refresh()
 		oi.cols = it->cols;
 		oi.rows = it->rows;
 		oi.selPoint = it->selected ? c->selectedWarpPoint() : -1;
+		oi.rot = it->rot;
+		oi.rotHandle = kind_ == Kind::Output && it->selected && !it->locked;
 		QString text = QStringLiteral("%1%2  %3×%4")
 				       .arg(it->locked ? QStringLiteral("🔒 ") : QString())
 				       .arg(s->name)
@@ -462,9 +470,19 @@ void PreviewView::drawOverlay(const Overlay &ov, uint32_t cx, uint32_t cy)
 				gfx::drawLine((float)a.x, (float)a.y, (float)b.x, (float)b.y, t,
 					      withAlpha(it.color, strokeA));
 			}
-			if (it.selected) {
-				/* faint original rectangle, for reference */
-				gfx::strokeRect(x, y, w, h, 1.0f * d, withAlpha(it.color, 70));
+			if (it.selected && !it.points.empty()) {
+				/* faint (rotated) slice rectangle, for reference */
+				const PointD c = rectCenter(it.rect);
+				const PointD cs[4] = {{(double)it.rect.x, (double)it.rect.y},
+						      {(double)it.rect.right(), (double)it.rect.y},
+						      {(double)it.rect.right(), (double)it.rect.bottom()},
+						      {(double)it.rect.x, (double)it.rect.bottom()}};
+				for (int i = 0; i < 4; i++) {
+					const PointD a = scr(rotateAbout(cs[i], c, it.rot));
+					const PointD b = scr(rotateAbout(cs[(i + 1) % 4], c, it.rot));
+					gfx::drawLine((float)a.x, (float)a.y, (float)b.x, (float)b.y, 1.0f * d,
+						      withAlpha(it.color, 70));
+				}
 			}
 		} else {
 			if (fillA)
@@ -510,10 +528,22 @@ void PreviewView::drawOverlay(const Overlay &ov, uint32_t cx, uint32_t cy)
 			gfx::drawTexture(tex, std::floor(lx), std::floor(ly), lw, lh);
 		}
 
+		if (it.rotHandle) {
+			/* Rotation handle: a dot above the top edge, joined to it. */
+			const PointD c = rectCenter(it.rect);
+			const PointD top = scr(rotateAbout({c.x, (double)it.rect.y}, c, it.rot));
+			const PointD hp = scr(rotateHandlePos(it.rect, it.rot, ov.zoom, ov.dpr));
+			gfx::drawLine((float)top.x, (float)top.y, (float)hp.x, (float)hp.y, 1.0f * d,
+				      withAlpha(it.color, 200));
+			const float rs = 10.0f * d;
+			gfx::fillRect((float)hp.x - rs / 2, (float)hp.y - rs / 2, rs, rs, withAlpha(it.color, 255));
+			gfx::strokeRect((float)hp.x - rs / 2, (float)hp.y - rs / 2, rs, rs, 1.5f * d, 0xFFFFFFFF);
+		}
+
 		if (it.selected && !it.locked && it.points.empty()) {
 			float hs = 7.0f * d;
 			for (Handle hd : kResizeHandles) {
-				PointD p = handlePos(it.rect, hd);
+				PointD p = rotateAbout(handlePos(it.rect, hd), rectCenter(it.rect), it.rot);
 				float px = (float)(p.x * ov.zoom + ov.panX), py = (float)(p.y * ov.zoom + ov.panY);
 				gfx::fillRect(px - hs / 2, py - hs / 2, hs, hs, 0xFFFFFFFF);
 				gfx::strokeRect(px - hs / 2, py - hs / 2, hs, hs, 1.0f * d, withAlpha(it.color, 255));
@@ -597,6 +627,31 @@ int PreviewView::hitPoint(const Item &it, const QPointF &p) const
 	return best;
 }
 
+/* The rotation handle sits this many screen pixels above the slice's top edge. */
+static constexpr double kRotateHandleGap = 22.0;
+
+PointD PreviewView::rotateHandlePos(const IRect &r, double rot, double zoom, double dpr) const
+{
+	const PointD c = rectCenter(r);
+	return rotateAbout({c.x, r.y - kRotateHandleGap * dpr / zoom}, c, rot);
+}
+
+bool PreviewView::hitRotate(const Item &it, const QPointF &p) const
+{
+	if (kind_ != Kind::Output || !it.selected || it.locked)
+		return false;
+	const PointD h = rotateHandlePos(it.rect, it.rot, zoom_, devicePixelRatioF());
+	const double tol = 9.0 * devicePixelRatioF() / zoom_;
+	return std::hypot(h.x - p.x(), h.y - p.y()) <= tol;
+}
+
+/* Mouse position in the slice's own (unrotated) frame, for its resize handles. */
+static QPointF unrotated(const QPointF &p, const IRect &r, double rot)
+{
+	const PointD q = rotateAbout({p.x(), p.y()}, rectCenter(r), -rot);
+	return QPointF(q.x, q.y);
+}
+
 void PreviewView::updateHover(const QPointF &p)
 {
 	Controller *c = Controller::instance();
@@ -615,8 +670,13 @@ void PreviewView::updateHover(const QPointF &p)
 			}
 			return;
 		}
+		if (hitRotate(it, p)) {
+			setCursor(Qt::PointingHandCursor);
+			return;
+		}
+		const QPointF lp = unrotated(p, it.rect, it.rot);
 		Handle hh = (it.selected && !it.locked && it.points.empty())
-				    ? hitTest(it.rect, p.x(), p.y(), tol)
+				    ? hitTest(it.rect, lp.x(), lp.y(), tol)
 				    : (it.contains(p.x(), p.y()) ? Handle::Move : Handle::None);
 		if (hh != Handle::None) {
 			hover = it.sliceId;
@@ -669,8 +729,18 @@ void PreviewView::mousePressEvent(QMouseEvent *e)
 			dragStartPoint_ = it.points[(size_t)pi];
 			return;
 		}
+		if (hitRotate(it, p)) {
+			drag_ = Drag::Rotate;
+			dragSlice_ = it.sliceId;
+			dragStartRect_ = it.rect;
+			dragStartRot_ = it.rot;
+			const PointD c = rectCenter(it.rect);
+			dragStartAngle_ = std::atan2(p.y() - c.y, p.x() - c.x);
+			return;
+		}
+		const QPointF lp = unrotated(p, it.rect, it.rot);
 		Handle h = (it.selected && !it.locked && it.points.empty())
-				   ? hitTest(it.rect, p.x(), p.y(), tol)
+				   ? hitTest(it.rect, lp.x(), lp.y(), tol)
 				   : (it.contains(p.x(), p.y()) ? Handle::Move : Handle::None);
 		if (h == Handle::None)
 			continue;
@@ -684,6 +754,7 @@ void PreviewView::mousePressEvent(QMouseEvent *e)
 		dragHandle_ = h;
 		dragSlice_ = it.sliceId;
 		dragStartRect_ = it.rect;
+		dragStartRot_ = it.rot;
 		return;
 	}
 
@@ -760,18 +831,48 @@ void PreviewView::mouseMoveEvent(QMouseEvent *e)
 		refresh();
 		return;
 	}
+	case Drag::Rotate: {
+		const PointD c = rectCenter(dragStartRect_);
+		const double a = std::atan2(p.y() - c.y, p.x() - c.x);
+		double deg = dragStartRot_ + (a - dragStartAngle_) * 180.0 / 3.14159265358979323846;
+		if (e->modifiers() & Qt::ShiftModifier) {
+			deg = std::round(deg / 15.0) * 15.0; /* Shift: 15° steps */
+		} else {
+			deg = std::round(deg * 10.0) / 10.0;
+			const double q = std::round(deg / 90.0) * 90.0;
+			if (snap && std::fabs(deg - q) <= 2.0)
+				deg = q; /* snap to straight */
+		}
+		Controller::instance()->setSliceRotation(dragSlice_, deg);
+		refresh();
+		return;
+	}
 	case Drag::Move:
 	case Drag::Resize: {
 		double dx = p.x() - dragStartCanvas_.x(), dy = p.y() - dragStartCanvas_.y();
+		/* Rotated slices: no edge snapping (their edges aren't the rect's),
+		 * and resizing works along the slice's own axes. */
+		const bool rotated = dragStartRot_ != 0.0;
+		const bool snapHere = snap && !rotated;
 		SnapTargets t;
-		if (snap)
+		if (snapHere)
 			t = snapTargets(dragSlice_);
 		DragResult r;
 		if (drag_ == Drag::Move) {
-			r = applyMove(dragStartRect_, dx, dy, snap ? &t : nullptr, thr);
+			r = applyMove(dragStartRect_, dx, dy, snapHere ? &t : nullptr, thr);
 		} else {
 			bool lock = aspectLock_ != bool(e->modifiers() & Qt::ShiftModifier);
-			r = applyResize(dragStartRect_, dragHandle_, dx, dy, lock, snap ? &t : nullptr, thr, 1);
+			const PointD ld = rotateAbout({dx, dy}, {0, 0}, -dragStartRot_);
+			r = applyResize(dragStartRect_, dragHandle_, ld.x, ld.y, lock, snapHere ? &t : nullptr, thr, 1);
+			if (rotated) {
+				/* Keep the opposite edge / corner still on screen: shift by
+				 * (I - R)(c0 - c1), with R the slice's rotation. */
+				const PointD c0 = rectCenter(dragStartRect_), c1 = rectCenter(r.rect);
+				const PointD d0{c0.x - c1.x, c0.y - c1.y};
+				const PointD rd = rotateAbout(d0, {0, 0}, dragStartRot_);
+				r.rect.x += (int)std::lround(d0.x - rd.x);
+				r.rect.y += (int)std::lround(d0.y - rd.y);
+			}
 		}
 		guideX_ = r.snappedX;
 		guideY_ = r.snappedY;
@@ -924,6 +1025,8 @@ void PreviewView::keyPressEvent(QKeyEvent *e)
 		}
 		if (drag_ == Drag::Point)
 			c->setWarpPoint(dragSlice_, dragPoint_, dragStartPoint_);
+		if (drag_ == Drag::Rotate)
+			c->setSliceRotation(dragSlice_, dragStartRot_);
 		if (drag_ == Drag::Move || drag_ == Drag::Resize)
 			applyRect(dragSlice_, dragStartRect_);
 		drag_ = Drag::None;

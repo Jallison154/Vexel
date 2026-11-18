@@ -586,6 +586,7 @@ static QJsonObject sliceJson(const Slice &s, const QString &fromDisplay)
 			   {"enabled", s.enabled},
 			   {"warp", s.warp.active() ? QJsonValue(warpToJson(s.warp)) : QJsonValue()},
 			   {"feather", s.feather.active() ? QJsonValue(featherToJson(s.feather)) : QJsonValue()},
+			   {"rotation", s.rotation},
 			   {"fromDisplay", fromDisplay}};
 }
 
@@ -609,6 +610,7 @@ static bool clipboardSlice(Slice &out, QString &fromDisplay)
 	out.enabled = o.value("enabled").toBool(true);
 	out.warp = warpFromJson(o.value("warp"));
 	out.feather = featherFromJson(o.value("feather"));
+	out.rotation = normalizeAngle(o.value("rotation").toDouble(0.0));
 	fromDisplay = o.value("fromDisplay").toString();
 	return !out.src.empty() && !out.dst.empty();
 }
@@ -850,7 +852,7 @@ void Controller::setWarpPoint(const QString &sliceId, int index, const PointD &p
 	Slice *s = doc_.slice(sliceId);
 	if (!s || s->locked || index < 0 || index >= s->warp.count() || s->dst.empty())
 		return;
-	PointD n = pixelsToWarp(px, s->dst);
+	PointD n = pixelsToWarp(px, s->dst, s->rotation);
 	n.x = std::clamp(n.x, -10.0, 11.0);
 	n.y = std::clamp(n.y, -10.0, 11.0);
 	PointD &cur = s->warp.pts[(size_t)index];
@@ -865,7 +867,7 @@ void Controller::nudgeWarpPoint(const QString &sliceId, int index, double dx, do
 	const Slice *s = doc_.slice(sliceId);
 	if (!s || index < 0 || index >= s->warp.count())
 		return;
-	const PointD px = warpToPixels(s->warp.pts[(size_t)index], s->dst);
+	const PointD px = warpToPixels(s->warp.pts[(size_t)index], s->dst, s->rotation);
 	/* Snap to whole output pixels so arrow steps are exact. */
 	setWarpPoint(sliceId, index, {std::round(px.x) + dx, std::round(px.y) + dy});
 }
@@ -876,6 +878,16 @@ void Controller::setSliceFeather(const QString &sliceId, const Feather &f)
 	if (!s || s->locked || s->feather == f)
 		return;
 	s->feather = f;
+	changed(Change::Geometry);
+}
+
+void Controller::setSliceRotation(const QString &sliceId, double degrees)
+{
+	Slice *s = doc_.slice(sliceId);
+	const double a = normalizeAngle(std::round(degrees * 100.0) / 100.0);
+	if (!s || s->locked || s->rotation == a)
+		return;
+	s->rotation = a;
 	changed(Change::Geometry);
 }
 

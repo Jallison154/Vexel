@@ -39,12 +39,13 @@ struct Slice {
 	bool locked = false; /* protects geometry, display and deletion */
 	Warp warp;           /* projection mapping: corner pin / mesh (inactive = plain rect) */
 	Feather feather;     /* soft edges for projector blending */
+	double rotation = 0; /* degrees clockwise about the centre of dst (-180..180] */
 };
 
-/* Slices that need the warp/soft-edge renderer (otherwise a plain blit). */
+/* Slices that need the warp / soft-edge / rotation renderer (otherwise a plain blit). */
 inline bool sliceIsMapped(const Slice &s)
 {
-	return (s.warp.active() && !isIdentityWarp(s.warp)) || s.feather.active();
+	return (s.warp.active() && !isIdentityWarp(s.warp)) || s.feather.active() || s.rotation != 0.0;
 }
 
 QJsonObject warpToJson(const Warp &w);

@@ -11,7 +11,7 @@ Checks: identity warps stay pixel-exact; corner pin geometry and perspective;
 outside the shape is black; mesh warp through its control points; dragging
 a point in the editor; arrow-key nudges (1 / 10 px), Tab and Esc; the warp
 follows when the slice moves; undo; soft-edge ramp; warped test pattern;
-persistence across a restart.
+persistence across a restart; rotating a slice as a whole.
 
 Usage:
   python3 tools/warp_test.py --obs-app ~/Library/Caches/obs-output-mapping/OBS.app --work /tmp/omwarp
@@ -19,6 +19,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import secrets
 import sys
@@ -272,9 +273,109 @@ def phase(ws, work):
           f"{px(int(ex), int(ey))} at {int(ex)},{int(ey)}")
     check("Test pattern is warped: the unwarped corner is black", px(3, 3) == (0, 0, 0), str(px(3, 3)))
     ws.vendor("SetIdentify", {"displayName": "PM", "mode": "off"})
+
+    rotation(ws, work)
+
+    # Leave a corner pin + soft edge + rotation for the persistence check.
+    ws.vendor("SetState", {"state": layout()})
+    ws.vendor("SetSliceWarp", {"sliceName": "Wall", "cols": 2, "rows": 2,
+                               "points": [{"x": x, "y": y} for x, y in q]})
     ws.vendor("SetSliceFeather", {"sliceName": "Wall", "right": 120, "left": 0, "top": 0, "bottom": 0,
                                   "gamma": 1.4})
+    ws.vendor("SetSliceRotation", {"sliceName": "Wall", "degrees": 12.5})
     return at.state(ws)
+
+
+def rot_px(x, y, cx, cy, deg):
+    """Rotate (x, y) about (cx, cy), clockwise on screen (y down)."""
+    a = math.radians(deg)
+    dx, dy = x - cx, y - cy
+    return (cx + dx * math.cos(a) - dy * math.sin(a), cy + dx * math.sin(a) + dy * math.cos(a))
+
+
+def rotation(ws, work):
+    """Rotating a slice as a whole: render, editor handles, undo, locking."""
+    DX, DY, DW, DH = 560, 240, 800, 600
+    doc = layout()
+    doc["displays"][0]["slices"][0]["dst"] = R(DX, DY, DW, DH)
+    ws.vendor("SetState", {"state": doc})
+    ws.vendor("Select", {"sliceName": "Wall"})
+    cx, cy = DX + DW / 2, DY + DH / 2
+
+    r = ws.vendor("SetSliceRotation", {"sliceName": "Wall", "degrees": 30})
+    check("Rotation set", r.get("ok") and abs(slice_of(r["state"]).get("rotation", 0) - 30) < 1e-9,
+          str(slice_of(r["state"]).get("rotation")))
+    px = snap(ws, work, "rotated30")
+
+    def expect(x, y, deg):
+        # Output pixel centre -> slice point -> Program point.
+        ux, uy = rot_px(x + 0.5, y + 0.5, cx, cy, -deg)
+        u, v = (ux - DX) / DW, (uy - DY) / DH
+        return u, v, grad(u * W - 0.5, v * H - 0.5)
+
+    worst, n = 0, 0
+    for (u0, v0) in [(0.5, 0.5), (0.2, 0.2), (0.8, 0.25), (0.25, 0.8), (0.9, 0.9), (0.1, 0.55)]:
+        ox, oy = rot_px(DX + u0 * DW, DY + v0 * DH, cx, cy, 30)
+        x, y = int(ox), int(oy)
+        _, _, want = expect(x, y, 30)
+        worst = max(worst, diff(px(x, y), want))
+        n += 1
+    check("Rotated 30°: every sampled pixel shows the right Program point", worst <= 4,
+          f"worst colour error {worst} over {n} points")
+    u, v, _ = expect(DX + 3, DY + 3, 30)
+    check("Rotated 30°: the old (unrotated) corner is now outside the slice, black",
+          (u < 0 or v < 0 or u > 1 or v > 1) and px(DX + 3, DY + 3) == (0, 0, 0), f"{px(DX + 3, DY + 3)} u={u:.2f}")
+
+    r = ws.vendor("SetSliceRotation", {"sliceName": "Wall", "degrees": 370})
+    check("Angles wrap to -180..180 (370° -> 10°)", abs(slice_of(r["state"])["rotation"] - 10) < 1e-9,
+          str(slice_of(r["state"])["rotation"]))
+
+    # Editor: at 90° the right-edge handle sits below the centre; dragging it
+    # down 100 px widens the slice along its own axis, the opposite edge stays put.
+    time.sleep(0.9)  # separate undo steps
+    ws.vendor("SetSliceRotation", {"sliceName": "Wall", "degrees": 90})
+    time.sleep(0.9)
+    hx, hy = rot_px(DX + DW, cy, cx, cy, 90)
+    lx0, ly0 = rot_px(DX, cy, cx, cy, 90)
+    r = ws.vendor("EditorDrag", {"view": "output", "fromX": hx, "fromY": hy, "toX": hx, "toY": hy + 100})
+    d = slice_of(r["state"])["dst"]
+    ncx, ncy = d["x"] + d["w"] / 2, d["y"] + d["h"] / 2
+    lx1, ly1 = rot_px(d["x"], ncy, ncx, ncy, 90)
+    check("Rotated slice: dragging an edge handle resizes along the slice's own axis",
+          d["w"] == DW + 100 and d["h"] == DH, str(d))
+    check("Rotated slice: the opposite edge stays still on screen",
+          abs(lx1 - lx0) <= 1 and abs(ly1 - ly0) <= 1, f"{(lx0, ly0)} -> {(round(lx1, 1), round(ly1, 1))}")
+    time.sleep(0.9)
+    r = ws.vendor("EditorDrag", {"view": "output", "fromX": ncx, "fromY": ncy, "toX": ncx + 40, "toY": ncy - 30})
+    d2 = slice_of(r["state"])["dst"]
+    check("Rotated slice: dragging its body moves it on screen, no snapping",
+          d2["x"] == d["x"] + 40 and d2["y"] == d["y"] - 30 and d2["w"] == d["w"], f"{d} -> {d2}")
+    ws.vendor("Undo")
+    r = ws.vendor("Undo")
+    check("Undo restores the rotated slice's rectangle", slice_of(r["state"])["dst"] == R(DX, DY, DW, DH),
+          str(slice_of(r["state"])["dst"]))
+    r = ws.vendor("Undo")
+    check("Undo restores the previous rotation", abs(slice_of(r["state"])["rotation"] - 10) < 1e-9,
+          str(slice_of(r["state"]).get("rotation")))
+
+    # Rotated test pattern and outlines follow the rotation.
+    ws.vendor("SetSliceRotation", {"sliceName": "Wall", "degrees": 30})
+    ws.vendor("SetIdentify", {"displayName": "PM", "mode": "pattern"})
+    time.sleep(0.4)
+    px = snap(ws, work, "pattern_rotated")
+    ex, ey = rot_px(cx, DY + 1.5, cx, cy, 30)
+    check("Test pattern is rotated: its red top edge lies on the rotated edge", px(int(ex), int(ey))[0] > 120,
+          f"{px(int(ex), int(ey))} at {int(ex)},{int(ey)}")
+    ws.vendor("SetIdentify", {"displayName": "PM", "mode": "off"})
+
+    ws.vendor("SetSliceLocked", {"sliceName": "Wall", "locked": True})
+    r = ws.vendor("SetSliceRotation", {"sliceName": "Wall", "degrees": 45})
+    check("A locked slice can't be rotated", not r.get("ok") and abs(slice_of(at.state(ws))["rotation"] - 30) < 1e-9,
+          r.get("error", ""))
+    ws.vendor("SetSliceLocked", {"sliceName": "Wall", "locked": False})
+    r = ws.vendor("SetSliceRotation", {"sliceName": "Wall", "degrees": 0})
+    check("Rotation 0 removes it from the saved slice", "rotation" not in slice_of(r["state"]),
+          str(slice_of(r["state"]).get("rotation")))
 
 
 def main():
@@ -312,6 +413,8 @@ def main():
         check("Warp persists across a restart", a.get("warp") == b.get("warp"), json.dumps(a.get("warp")))
         check("Soft edge persists across a restart", a.get("feather") == b.get("feather"),
               json.dumps(a.get("feather")))
+        check("Rotation persists across a restart", a.get("rotation") == b.get("rotation") == 12.5,
+              str(a.get("rotation")))
         ws.close()
     finally:
         at.quit_obs(proc)

@@ -178,6 +178,33 @@ static bool near(double a, double b, double eps = 1e-6)
 	return std::fabs(a - b) <= eps;
 }
 
+static void test_rotation()
+{
+	CHECK(near(normalizeAngle(190), -170) && near(normalizeAngle(-180), 180) && near(normalizeAngle(540), 180));
+	CHECK(normalizeAngle(360) == 0.0 && normalizeAngle(std::nan("")) == 0.0);
+	const IRect r{100, 50, 400, 200}; /* centre 300, 150 */
+	/* 90° clockwise (y down): the top-left corner goes to the top-right of the turned shape. */
+	PointD tl = warpToPixels({0, 0}, r, 90);
+	CHECK(near(tl.x, 400) && near(tl.y, -50));
+	PointD c = warpToPixels({0.5, 0.5}, r, 37);
+	CHECK(near(c.x, 300) && near(c.y, 150)); /* rotates about the centre */
+	/* pixelsToWarp undoes warpToPixels at any angle. */
+	for (double a : {-135.0, -12.5, 0.0, 33.0, 90.0, 180.0}) {
+		PointD n = pixelsToWarp(warpToPixels({0.2, 0.9}, r, a), r, a);
+		CHECK(near(n.x, 0.2) && near(n.y, 0.9));
+	}
+	/* Rotated plain slice: a single quad whose corners are the rotated rect. */
+	std::vector<float> t = warpTriangles(Warp{}, r, 90);
+	CHECK(t.size() == 24);
+	CHECK(near(t[0], 400, 1e-3) && near(t[1], -50, 1e-3) && t[2] == 0.0f && t[3] == 0.0f);
+	/* Rotating a warp rotates its outline the same way. */
+	Warp cp = identityWarp(2, 2);
+	cp.pts[3] = {1.1, 1.2};
+	const PointD o = warpToPixels(evalWarp(cp, 1, 1), r, 30);
+	const PointD e = rotateAbout(warpToPixels({1.1, 1.2}, r), rectCenter(r), 30);
+	CHECK(near(o.x, e.x) && near(o.y, e.y));
+}
+
 static void test_warp()
 {
 	/* Identity grids map every point to itself (corner pin and mesh). */
@@ -266,6 +293,7 @@ static void test_warp()
 int main()
 {
 	test_warp();
+	test_rotation();
 	test_two_display_example();
 	test_defaults_and_fit();
 	test_clip();
