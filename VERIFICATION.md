@@ -59,14 +59,14 @@ Evidence:
 
 ## Automated (Mac)
 
-Current results, 2026-11-16, on commit `c232b02` (the 0.8.0 code; the next
-commit, `862a52f`, only changes the version number):
+Current results, 2026-11-18, on commit `0f440e3` (0.8.0 with slice
+rotation, the tidied slice panel and the UI-check fixes):
 
 | Test | Result | What it covers |
 |---|---|---|
-| `output-mapping-core-tests` | **All pass** | Geometry (draw, move, resize, aspect lock, snapping, numeric edits, fit, 1:1, clipping), display identity matching (exact UUID, serial re-identification, twin units, missing serials, duplicate UUIDs), warp maths (corner pin perspective, mesh through its points, resampling, outlines) |
+| `output-mapping-core-tests` | **All pass** | Geometry (draw, move, resize, aspect lock, snapping, numeric edits, fit, 1:1, clipping), display identity matching (exact UUID, serial re-identification, twin units, missing serials, duplicate UUIDs), warp maths (corner pin perspective, mesh through its points, resampling, outlines), slice rotation maths |
 | `tools/acceptance_test.py` | **72/72** | The six-step acceptance test below, plus delay, presets, locking, clipboard, identify, restart |
-| `tools/warp_test.py` | **33/33** | Projection mapping: corner pin geometry checked against an independently computed perspective, mesh, editor point drag, arrow-key nudges, Tab, Esc, undo, soft-edge brightness curve, warped test pattern, persistence |
+| `tools/warp_test.py` | **46/46** | Projection mapping: corner pin geometry checked against an independently computed perspective, mesh, editor point drag, arrow-key nudges, Tab, Esc, undo, soft-edge brightness curve, warped test pattern, persistence; slice rotation (rendered pixels, angle wrap, resizing and moving a rotated slice in the editor, undo, rotated test pattern, locking, persistence) |
 | `tools/ndi_test.py` | **32/32** | NDI outputs against a **stand-in NDI library** that records every frame: format, frame rate, pixel-exact content, scaling, delay, test pattern, rename, stop, resume after restart, missing runtime. **No real NDI Runtime or network was used.** |
 
 An earlier full log (74 checks, 2026-11-13, version 0.5.2) is in
@@ -100,10 +100,28 @@ rendered through its own GPU draw path, into a Qt grab of the window, so
 macOS Screen Recording permission isn't needed. Output images come from
 `Snapshot`, which renders exactly what the display receives.
 
-## Show-readiness soak test (Mac, version 0.5.0)
+## Show-readiness soak test (Mac)
 
-Run once, on 2026-11-12, on **version 0.5.0**; **not re-run** for later
-versions. `tools/soak_test.py`, 30 minutes at **60 fps** with three outputs (2×1920×1080,
+### Version 0.8.0 (2026-11-18, commit `0f440e3`)
+
+`tools/soak_test.py`, 15 minutes at **60 fps**, same three outputs as below,
+on the MacBook Air M3 listed above. The soak doesn't use projection mapping
+or rotation; those are covered by `tools/warp_test.py`.
+
+| Check | Result |
+|---|---|
+| Crashes / disconnects | none; OBS quit cleanly |
+| Pixel-exact output checks after every change | **329 / 329 exact** |
+| Workload | 297 scene changes (fades), 128 delay changes, 81 slice nudges, 69 preset recalls, 52 test-pattern toggles |
+| Memory growth after warm-up | +34 MB (186 → 220 MB; limit 50 MB) |
+| Skipped render frames | 11 of 50,398 (0.022 %) |
+| Frame render time | mean 7.74 ms, worst sample 10.23 ms (budget 16.7 ms) |
+
+**Verdict: SHOW READY** on this Mac. Not yet run on the Windows show PC.
+
+### Version 0.5.0 (2026-11-12)
+
+Run once on **version 0.5.0**. `tools/soak_test.py`, 30 minutes at **60 fps** with three outputs (2×1920×1080,
 1×1280×720 with scaled slices), nothing else running on the machine. Full
 report: [docs/results/soak-report.md](docs/results/soak-report.md).
 
