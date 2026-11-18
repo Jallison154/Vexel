@@ -242,8 +242,11 @@ void OutputDock::stopAllConfirmed()
 	if (live > 0) {
 		QMessageBox box(
 			QMessageBox::Warning, QStringLiteral("Stop All Outputs?"),
-			QStringLiteral(
-				"%1 output(s) are live (fullscreen or NDI). Stopping them blacks out those screens.")
+			(live == 1
+				 ? QStringLiteral(
+					   "1 output is live (fullscreen or NDI). Stopping it blacks out that screen.")
+				 : QStringLiteral(
+					   "%1 outputs are live (fullscreen or NDI). Stopping them blacks out those screens."))
 				.arg(live),
 			QMessageBox::NoButton, this);
 		QPushButton *stop = box.addButton(QStringLiteral("Stop All"), QMessageBox::DestructiveRole);
@@ -318,8 +321,9 @@ QWidget *OutputDock::makeTile(const QString &id)
 	auto *win = new QPushButton(m == OutputMode::Window ? QStringLiteral("Close Window") : QStringLiteral("Window"),
 				    tile);
 	buttons->addWidget(fs, 1);
-	buttons->addWidget(win);
+	buttons->addWidget(win, d->kind == DisplayKind::Virtual ? 1 : 0);
 	win->setVisible(!isNdi);
+	fs->setVisible(d->kind != DisplayKind::Virtual || m == OutputMode::Fullscreen); /* window only */
 	if (idm != Identify::Off) {
 		auto *clear = new QPushButton(QStringLiteral("Clear Pattern"), tile);
 		clear->setToolTip(QStringLiteral("Turn off the test pattern / outlines on this output"));

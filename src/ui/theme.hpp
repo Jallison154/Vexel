@@ -71,6 +71,7 @@ QPushButton#Live { background: #FF4D5E; color: white; border-color: #FF4D5E; fon
 QPushButton#Danger { color: #FF8A95; }
 QCheckBox::indicator { width: 14px; height: 14px; }
 QStatusBar, QWidget#StatusBar { background: #0F1626; border-top: 1px solid #1C2740; }
+QScrollArea#Inspector, QScrollArea#Inspector > QWidget > QWidget { background: transparent; }
 QLabel#Status { color: #8A97AE; font-family: Menlo, Consolas, "Cascadia Mono", monospace; font-size: 11px; padding: 3px 8px; }
 QMenu { background: #111A2C; border: 1px solid #22304A; padding: 4px; }
 QMenu::item { padding: 5px 18px; border-radius: 4px; }

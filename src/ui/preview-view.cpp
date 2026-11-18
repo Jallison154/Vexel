@@ -525,6 +525,13 @@ void PreviewView::drawOverlay(const Overlay &ov, uint32_t cx, uint32_t cy)
 			float lx = x, ly = y - lh - 2 * d;
 			if (ly < 0)
 				ly = y + 2 * d; /* inside if no room above */
+			if (it.rotHandle && ly < y) {
+				/* Don't sit on the rotation handle above the top edge: go inside. */
+				const PointD hp = scr(rotateHandlePos(it.rect, it.rot, ov.zoom, ov.dpr));
+				const float pad = 8.0f * d;
+				if (hp.x + pad > lx && hp.x - pad < lx + lw && hp.y + pad > ly && hp.y - pad < ly + lh)
+					ly = y + 2 * d;
+			}
 			gfx::drawTexture(tex, std::floor(lx), std::floor(ly), lw, lh);
 		}
 

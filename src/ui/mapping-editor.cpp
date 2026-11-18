@@ -370,12 +370,15 @@ void MappingEditor::buildUi()
 			  if (c_->outputMode(d.id) == OutputMode::Fullscreen || c_->outputMode(d.id) == OutputMode::Ndi)
 				  live++;
 		  if (live > 0) {
-			  QMessageBox box(QMessageBox::Warning, QStringLiteral("Stop All Outputs?"),
-					  QStringLiteral(
-						  "%1 fullscreen output(s) are live. Stopping them blacks out those "
-						  "screens.")
-						  .arg(live),
-					  QMessageBox::NoButton, this);
+			  QMessageBox box(
+				  QMessageBox::Warning, QStringLiteral("Stop All Outputs?"),
+				  (live == 1
+					   ? QStringLiteral(
+						     "1 output is live (fullscreen or NDI). Stopping it blacks out that screen.")
+					   : QStringLiteral(
+						     "%1 outputs are live (fullscreen or NDI). Stopping them blacks out those screens."))
+					  .arg(live),
+				  QMessageBox::NoButton, this);
 			  QPushButton *stop = box.addButton(QStringLiteral("Stop All"), QMessageBox::DestructiveRole);
 			  box.addButton(QMessageBox::Cancel);
 			  box.setDefaultButton(QMessageBox::Cancel);
@@ -585,7 +588,9 @@ void MappingEditor::buildUi()
 	inspScroll->setWidgetResizable(true);
 	inspScroll->setFrameShape(QFrame::NoFrame);
 	inspScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-	inspScroll->setWidget(buildInspector());
+	inspScroll->setObjectName("Inspector");
+	inspScroll->viewport()->setAutoFillBackground(false);
+	inspScroll->setWidget(inspector_ = buildInspector());
 	side->addWidget(treeWrap);
 	side->addWidget(inspScroll);
 	side->setStretchFactor(0, 2);
@@ -623,6 +628,9 @@ void MappingEditor::buildUi()
 	statusLeft_->setObjectName("Status");
 	statusRight_ = new QLabel(sb);
 	statusRight_->setObjectName("Status");
+	/* The keyboard hint gives way first; the live status on the right never truncates. */
+	statusLeft_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+	statusLeft_->setMinimumWidth(0);
 	sl->addWidget(statusLeft_, 1);
 	sl->addWidget(statusRight_);
 	auto *mark = new QLabel(sb);
@@ -1386,6 +1394,8 @@ void MappingEditor::updateInspector()
 		if (!displayName_->hasFocus())
 			displayName_->setText(d->name);
 		QString text = st.text.toHtmlEscaped();
+		if (d->kind == DisplayKind::Virtual && c_->outputMode(d->id) == OutputMode::Window)
+			text = QStringLiteral("Virtual · window open");
 		if (isConnected(st.match) && !st.exactPixels)
 			text += QStringLiteral("<br><span style='color:%1'>The OS is scaling this display, so output "
 					       "is resampled, not 1:1. Use the display's native resolution for "
@@ -1445,6 +1455,11 @@ void MappingEditor::updateInspector()
 
 		OutputMode m = c_->outputMode(d->id);
 		windowBtn_->setVisible(!isNdi);
+		/* Virtual displays only open as a window: no dead Fullscreen button. */
+		fullscreenBtn_->setVisible(!isVirtual || m == OutputMode::Fullscreen);
+		windowBtn_->setObjectName(isVirtual && m != OutputMode::Window ? "Primary" : "");
+		windowBtn_->style()->unpolish(windowBtn_);
+		windowBtn_->style()->polish(windowBtn_);
 		if (isNdi) {
 			const bool on = m == OutputMode::Ndi;
 			fullscreenBtn_->setText(on ? QStringLiteral("■ Stop NDI") : QStringLiteral("▶ Start NDI"));
@@ -1639,12 +1654,16 @@ void MappingEditor::updateStatusBar()
 					    "pans · %1+scroll zooms · hold %2 to bypass snapping")
 				     .arg(modKeyName(), altKeyName()));
 	const int idc = c_->identifyCount();
-	statusRight_->setText(
-		QStringLiteral("Program %1×%2 · %3 output(s) running%4")
-			.arg(pw)
-			.arg(ph)
-			.arg(c_->activeOutputCount())
-			.arg(idc ? QStringLiteral(" · ⚠ test pattern on %1 output(s)").arg(idc) : QString()));
+	const int running = c_->activeOutputCount();
+	statusRight_->setText(QStringLiteral("Program %1×%2 · %3%4")
+				      .arg(pw)
+				      .arg(ph)
+				      .arg(running == 0   ? QStringLiteral("no outputs running")
+					   : running == 1 ? QStringLiteral("1 output running")
+							  : QStringLiteral("%1 outputs running").arg(running))
+				      .arg(idc == 0   ? QString()
+					   : idc == 1 ? QStringLiteral(" · ⚠ test pattern on 1 output")
+						      : QStringLiteral(" · ⚠ test pattern on %1 outputs").arg(idc)));
 	statusRight_->setStyleSheet(idc ? QStringLiteral("color:%1;").arg(theme::kLive) : QString());
 	if (clearIdentifyAct_)
 		clearIdentifyAct_->setEnabled(idc > 0);
@@ -2026,6 +2045,12 @@ void MappingEditor::showShortcuts()
 	box.setTextFormat(Qt::RichText);
 	box.setText(html);
 	box.exec();
+}
+
+/* The whole inspector (slice / display settings), unscrolled. For docs and UI checks. */
+QImage MappingEditor::captureInspector()
+{
+	return inspector_ ? inspector_->grab().toImage() : QImage();
 }
 
 QImage MappingEditor::captureImage()

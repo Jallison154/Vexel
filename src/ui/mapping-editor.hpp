@@ -61,6 +61,7 @@ public:
 	 * by QWidget::grab(), so each preview is rendered offscreen through its
 	 * own draw path and composited in place. */
 	QImage captureImage();
+	QImage captureInspector();
 
 	/* Trigger a named editor action (automation; same code as the shortcut). */
 	bool triggerAction(const QString &name);
@@ -156,6 +157,7 @@ private:
 
 	/* display inspector */
 	QGroupBox *displayBox_ = nullptr;
+	QWidget *inspector_ = nullptr;
 	QLineEdit *displayName_ = nullptr;
 	QComboBox *screenCombo_ = nullptr;
 	QLabel *displayStatus_ = nullptr;
